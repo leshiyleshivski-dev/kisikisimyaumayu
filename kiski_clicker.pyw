@@ -37,6 +37,8 @@ PINK = "#F4A6A5"
 GOLD = "#FFD58A"
 MINT = "#96DBB4"
 HOLD_MS = 1250
+BONGO_SECRET_TAPS = 10
+BONGO_SECRET_TAP_WINDOW_SECONDS = 4.0
 
 CATS = (
     ("Смайлик", "лукавый и очень уверенный", "01_smug_cat.png", "#7A6CF6"),
@@ -95,9 +97,10 @@ kernel32.QueryFullProcessImageNameW.argtypes = (
 )
 kernel32.QueryFullProcessImageNameW.restype = wintypes.BOOL
 
-VK_F4, VK_F9, VK_F11 = 0x73, 0x78, 0x7A
+VK_UP, VK_F4, VK_F9, VK_F11 = 0x26, 0x73, 0x78, 0x7A
 MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP = 0x0002, 0x0004
 MOUSEEVENTF_MOVE, MOUSEEVENTF_MOVE_NOCOALESCE = 0x0001, 0x2000
+KEYEVENTF_KEYUP = 0x0002
 SW_RESTORE = 9
 PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 RED_DIAMOND_RATIO = (1540 / 2560, 980 / 1440)
@@ -119,8 +122,13 @@ class MouseInput(ctypes.Structure):
                 ("flags", wintypes.DWORD), ("time", wintypes.DWORD), ("extra_info", ctypes.c_size_t)]
 
 
+class KeyboardInput(ctypes.Structure):
+    _fields_ = [("virtual_key", wintypes.WORD), ("scan_code", wintypes.WORD),
+                ("flags", wintypes.DWORD), ("time", wintypes.DWORD), ("extra_info", ctypes.c_size_t)]
+
+
 class InputUnion(ctypes.Union):
-    _fields_ = [("mouse", MouseInput)]
+    _fields_ = [("mouse", MouseInput), ("keyboard", KeyboardInput)]
 
 
 class Input(ctypes.Structure):
@@ -237,6 +245,15 @@ def send_left_click(hold_seconds: float) -> bool:
     sent_down = user32.SendInput(1, ctypes.byref(down), ctypes.sizeof(Input)) == 1
     time.sleep(hold_seconds)
     up.type, up.data.mouse.flags = 0, MOUSEEVENTF_LEFTUP
+    return sent_down and user32.SendInput(1, ctypes.byref(up), ctypes.sizeof(Input)) == 1
+
+
+def send_key_tap(virtual_key: int) -> bool:
+    """Отправить короткое нажатие клавиши активному окну через Windows input."""
+    down, up = Input(), Input()
+    down.type, down.data.keyboard.virtual_key = 1, virtual_key
+    sent_down = user32.SendInput(1, ctypes.byref(down), ctypes.sizeof(Input)) == 1
+    up.type, up.data.keyboard.virtual_key, up.data.keyboard.flags = 1, virtual_key, KEYEVENTF_KEYUP
     return sent_down and user32.SendInput(1, ctypes.byref(up), ctypes.sizeof(Input)) == 1
 
 
@@ -779,6 +796,208 @@ class RouletteModule(ctk.CTkFrame):
 
 
 # ---------------------------------------------------------------------------
+# Секретный модуль Бонго. Он повторяет аккуратный жизненный цикл RLT Control:
+# открывает игру только на время действия, возвращает предыдущее окно и оставляет
+# между циклами обычный таймер, чтобы не мешать работе за компьютером.
+
+
+class BongoModule(ctk.CTkFrame):
+    SECOND_TAP_SECONDS = 3
+    CYCLE_DELAY_SECONDS = (7 * 60, 9 * 60)
+    RECONNECT_SECONDS = 5
+
+    def __init__(self, parent: ctk.CTkFrame, on_back) -> None:
+        super().__init__(parent, fg_color=APP_BG, corner_radius=0)
+        self.on_back = on_back
+        self.running = False
+        self.phase = "idle"
+        self.next_action: float | None = None
+        self.game_window: int | None = None
+        self.previous_window: int | None = None
+        self.cycle_count = 0
+        self.keys = {key: False for key in (VK_F9, VK_F11)}
+        self.process = ctk.StringVar(value="GTA5.exe")
+        self.connection = ctk.StringVar(value="Ищу GTA5.exe…")
+        self.status = ctk.StringVar(value="Готов к ритму Бонго.")
+        self.timer = ctk.StringVar(value="Таймер не запущен")
+        self.build_ui()
+        self.after(40, self.poll_hotkeys)
+        self.after(100, self.tick)
+        self.after(0, self.refresh_connection)
+
+    def build_ui(self) -> None:
+        top = ctk.CTkFrame(self, fg_color="transparent")
+        top.pack(fill="x", padx=46, pady=(36, 30))
+        ctk.CTkButton(
+            top, text="←  К котикам", command=self.back, width=126, height=38,
+            corner_radius=12, fg_color="#26314E", hover_color="#344263",
+            font=ctk.CTkFont("Segoe UI", 12, "bold"),
+        ).pack(side="left")
+        title = ctk.CTkFrame(top, fg_color="transparent")
+        title.pack(side="right")
+        ctk.CTkLabel(title, text="BONGO BEAT", font=ctk.CTkFont("Segoe UI", 24, "bold"), text_color=TEXT).pack(anchor="e")
+        ctk.CTkLabel(title, text="секретный ритм двух нажатий ↑", font=ctk.CTkFont("Segoe UI", 11), text_color=MUTED).pack(anchor="e")
+
+        body = ctk.CTkFrame(self, fg_color="transparent")
+        body.pack(fill="both", expand=True, padx=46, pady=(0, 26))
+
+        connection = ctk.CTkFrame(body, corner_radius=22, fg_color=SURFACE)
+        connection.pack(fill="x", pady=(0, 16))
+        connection.grid_columnconfigure(1, weight=1)
+        ctk.CTkLabel(connection, text="ПОДКЛЮЧЕНИЕ К ИГРЕ", font=ctk.CTkFont("Segoe UI", 11, "bold"), text_color="#FFB58A").grid(row=0, column=0, columnspan=2, padx=26, pady=(20, 8), sticky="w")
+        self.indicator = ctk.CTkLabel(connection, text="●", font=ctk.CTkFont(size=18), text_color="#F05A67")
+        self.indicator.grid(row=1, column=0, padx=(26, 10), pady=(0, 21))
+        ctk.CTkEntry(connection, textvariable=self.process, height=42, border_width=0, corner_radius=13, fg_color="#4A353B", font=ctk.CTkFont("Segoe UI", 14)).grid(row=1, column=1, padx=(0, 12), pady=(0, 21), sticky="ew")
+        ctk.CTkButton(connection, text="Проверить", command=self.refresh_connection, width=122, height=42, corner_radius=13, fg_color="#E1864B", hover_color="#EF9A61").grid(row=1, column=2, padx=(0, 26), pady=(0, 21))
+        ctk.CTkLabel(connection, textvariable=self.connection, font=ctk.CTkFont("Segoe UI", 11, "bold"), text_color=MUTED).grid(row=2, column=0, columnspan=3, padx=26, pady=(0, 17), sticky="w")
+
+        guide = ctk.CTkFrame(body, corner_radius=22, fg_color=SURFACE)
+        guide.pack(fill="x", pady=(0, 16))
+        ctk.CTkLabel(guide, text="КАК РАБОТАЕТ РИТМ", font=ctk.CTkFont("Segoe UI", 11, "bold"), text_color="#FFB58A").pack(anchor="w", padx=26, pady=(20, 10))
+        steps = (
+            ("1", "Запусти игру", "Окно процесса можно выбрать в поле выше."),
+            ("2", "Нажми F9", "Модуль выведет игру на передний план и нажмёт ↑."),
+            ("3", "Второй удар", "Через 3 секунды отправит ещё одно ↑, вернёт прежнее окно и запустит таймер."),
+        )
+        for number, heading, description in steps:
+            row = ctk.CTkFrame(guide, fg_color=SURFACE_ALT, corner_radius=14)
+            row.pack(fill="x", padx=22, pady=(0, 8))
+            ctk.CTkLabel(row, text=number, width=30, height=30, corner_radius=15, fg_color="#E1864B", text_color=TEXT, font=ctk.CTkFont("Segoe UI", 13, "bold")).pack(side="left", padx=(12, 12), pady=10)
+            copy = ctk.CTkFrame(row, fg_color="transparent")
+            copy.pack(side="left", fill="x", expand=True, pady=8)
+            ctk.CTkLabel(copy, text=heading, font=ctk.CTkFont("Segoe UI", 12, "bold"), text_color=TEXT).pack(anchor="w")
+            ctk.CTkLabel(copy, text=description, font=ctk.CTkFont("Segoe UI", 10), text_color=MUTED).pack(anchor="w")
+        ctk.CTkLabel(guide, text="После каждой пары модуль ждёт случайные 7–9 минут и повторяет ритм.", font=ctk.CTkFont("Segoe UI", 11, "bold"), text_color=GOLD).pack(anchor="w", padx=26, pady=(5, 16))
+
+        self.main_button = ctk.CTkButton(body, text="Запустить ритм  ·  F9", command=self.toggle, height=56, corner_radius=16, font=ctk.CTkFont("Segoe UI", 15, "bold"), fg_color="#E1864B", hover_color="#EF9A61")
+        self.main_button.pack(fill="x", pady=(0, 14))
+        monitor = ctk.CTkFrame(body, corner_radius=18, fg_color=SURFACE_ALT, border_width=1, border_color="#5B4036")
+        monitor.pack(fill="x", pady=(0, 12))
+        ctk.CTkLabel(monitor, text="СОСТОЯНИЕ", font=ctk.CTkFont("Segoe UI", 10, "bold"), text_color="#FFB58A").pack(pady=(14, 4))
+        ctk.CTkLabel(monitor, textvariable=self.timer, font=ctk.CTkFont("Segoe UI", 20, "bold"), text_color=TEXT).pack(pady=(0, 5))
+        ctk.CTkLabel(monitor, textvariable=self.status, font=ctk.CTkFont("Segoe UI", 11), text_color=MUTED, wraplength=650, justify="center").pack(padx=22, pady=(0, 14))
+        ctk.CTkLabel(body, text="F9 — запуск / остановка     ·     F11 — экстренная остановка", font=ctk.CTkFont("Segoe UI", 11, "bold"), text_color="#FFBA86").pack(pady=(0, 16))
+
+    def back(self) -> None:
+        self.on_back()
+
+    def refresh_connection(self) -> None:
+        if not self.winfo_exists():
+            return
+        self.game_window = find_game_window(self.process.get())
+        if self.game_window:
+            title = window_title(self.game_window)
+            self.connection.set(f"Подключено · {title[:28]}" if title else "Подключено")
+            self.indicator.configure(text_color=MINT)
+        else:
+            self.connection.set("Не подключено")
+            self.indicator.configure(text_color="#F05A67")
+        self.after(2000, self.refresh_connection)
+
+    def restore_previous_window(self) -> None:
+        previous = self.previous_window
+        self.previous_window = None
+        if previous and previous != self.game_window and user32.IsWindow(previous):
+            activate_window(previous)
+
+    def open_game_for_beat(self) -> bool:
+        self.game_window = find_game_window(self.process.get())
+        if not self.game_window:
+            self.status.set(f"Процесс «{self.process.get()}» не найден. Повторю через 5 секунд.")
+            self.next_action = time.monotonic() + self.RECONNECT_SECONDS
+            self.phase = "retry"
+            return False
+        previous = user32.GetForegroundWindow()
+        if not activate_window(self.game_window):
+            self.status.set("Не получилось вывести игру на передний план. Повторю через 5 секунд.")
+            self.next_action = time.monotonic() + self.RECONNECT_SECONDS
+            self.phase = "retry"
+            return False
+        self.previous_window = previous if previous and previous != self.game_window else None
+        return True
+
+    def start_first_tap(self) -> None:
+        if not self.open_game_for_beat():
+            return
+        if not send_key_tap(VK_UP):
+            self.status.set("Windows не принял первое нажатие ↑.")
+            self.restore_previous_window()
+            self.stop("Ритм остановлен: первое нажатие не отправлено.")
+            return
+        self.phase = "second_tap"
+        self.next_action = time.monotonic() + self.SECOND_TAP_SECONDS
+        self.timer.set("Второй удар через 00:03")
+        self.status.set("Первое ↑ отправлено. Игра останется открытой ещё 3 секунды.")
+
+    def send_second_tap(self) -> None:
+        if not self.game_window or not user32.IsWindow(self.game_window) or not activate_window(self.game_window):
+            self.restore_previous_window()
+            self.status.set("Игра закрыта или потеряла фокус — второй ↑ отменён.")
+            self.next_action = time.monotonic() + self.RECONNECT_SECONDS
+            self.phase = "retry"
+            return
+        if not send_key_tap(VK_UP):
+            self.restore_previous_window()
+            self.stop("Ритм остановлен: второе нажатие не отправлено.")
+            return
+        self.cycle_count += 1
+        self.restore_previous_window()
+        delay = random.randint(*self.CYCLE_DELAY_SECONDS)
+        self.phase = "waiting"
+        self.next_action = time.monotonic() + delay
+        minutes, seconds = divmod(delay, 60)
+        self.status.set(f"Пара ↑ готова · цикл {self.cycle_count}. Прежнее окно возвращено.")
+        self.timer.set(f"Следующий ритм через {minutes:02d}:{seconds:02d}")
+
+    def toggle(self) -> None:
+        if self.running:
+            self.stop("Таймер остановлен.")
+            return
+        self.running = True
+        self.phase = "first_tap"
+        self.next_action = time.monotonic()
+        self.cycle_count = 0
+        self.main_button.configure(text="Остановить ритм  ·  F9", fg_color="#D34D5C", hover_color="#B93D4A")
+        self.status.set("F9 принят. Открываю игру для первого ↑.")
+        self.after(0, self.tick)
+
+    def stop(self, message: str) -> None:
+        self.running, self.phase, self.next_action = False, "idle", None
+        self.restore_previous_window()
+        self.main_button.configure(text="Запустить ритм  ·  F9", fg_color="#E1864B", hover_color="#EF9A61")
+        self.timer.set("Таймер не запущен")
+        self.status.set(message)
+
+    def tick(self) -> None:
+        if self.winfo_exists() and self.running and self.next_action is not None:
+            now = time.monotonic()
+            remaining = self.next_action - now
+            if remaining <= 0:
+                if self.phase in {"first_tap", "retry", "waiting"}:
+                    self.start_first_tap()
+                elif self.phase == "second_tap":
+                    self.send_second_tap()
+            elif self.phase == "second_tap":
+                self.timer.set(f"Второй удар через 00:{max(0, int(remaining + 0.999)):02d}")
+            elif self.phase in {"waiting", "retry"}:
+                minutes, seconds = divmod(max(0, int(remaining + 0.999)), 60)
+                prefix = "Повторное подключение" if self.phase == "retry" else "Следующий ритм"
+                self.timer.set(f"{prefix} через {minutes:02d}:{seconds:02d}")
+        if self.winfo_exists():
+            self.after(100, self.tick)
+
+    def poll_hotkeys(self) -> None:
+        actions = {VK_F9: self.toggle, VK_F11: lambda: self.stop("Экстренно остановлено.")}
+        for key, action in actions.items():
+            down = bool(user32.GetAsyncKeyState(key) & 0x8000)
+            if down and not self.keys[key]:
+                action()
+            self.keys[key] = down
+        if self.winfo_exists():
+            self.after(40, self.poll_hotkeys)
+
+
+# ---------------------------------------------------------------------------
 # Основное приложение-кликер
 
 class KisikiApp(ctk.CTk):
@@ -798,6 +1017,8 @@ class KisikiApp(ctk.CTk):
         self.hold_job: str | None = None
         self.hold_tick: str | None = None
         self.hold_started = 0.0
+        self.bongo_secret_taps = 0
+        self.bongo_secret_deadline = 0.0
         self.combo_count = 0
         self.combo_deadline = 0.0
         self.combo_reset_job: str | None = None
@@ -809,6 +1030,7 @@ class KisikiApp(ctk.CTk):
         self.content = ctk.CTkFrame(self, fg_color=APP_BG, corner_radius=0)
         self.content.pack(fill="both", expand=True)
         self.roulette_module: RouletteModule | None = None
+        self.bongo_module: BongoModule | None = None
         # CTk иногда возвращает свою стандартную иконку позднее при старте.
         # Поэтому устанавливаем cat-иконку после полной инициализации окна.
         self.after(120, self.apply_window_icon)
@@ -884,7 +1106,7 @@ class KisikiApp(ctk.CTk):
         self.cancel_hold()
         self.click_effects.clear()
         for child in self.content.winfo_children():
-            if self.roulette_module is not None and child is self.roulette_module:
+            if child is self.roulette_module or child is self.bongo_module:
                 child.pack_forget()
             else:
                 child.destroy()
@@ -1211,6 +1433,23 @@ class KisikiApp(ctk.CTk):
         self.hint.configure(text=f"мяу +{amount}!", text_color=CATS[self.selected][3])
         self.spawn_click_effect(amount)
         self.play_meme_sound()
+        self.track_bongo_secret()
+
+    def track_bongo_secret(self) -> None:
+        """Открыть пасхалку Бонго после десяти быстрых обычных кликов."""
+        if self.selected != 1:
+            self.bongo_secret_taps = 0
+            self.bongo_secret_deadline = 0.0
+            return
+        now = time.monotonic()
+        if now > self.bongo_secret_deadline:
+            self.bongo_secret_taps = 0
+        self.bongo_secret_taps += 1
+        self.bongo_secret_deadline = now + BONGO_SECRET_TAP_WINDOW_SECONDS
+        if self.bongo_secret_taps >= BONGO_SECRET_TAPS:
+            self.bongo_secret_taps = 0
+            self.bongo_secret_deadline = 0.0
+            self.after(0, self.open_bongo)
 
     def spawn_click_effect(self, amount: int) -> None:
         """Лёгкий всплывающий эффект вместо резкой анимации."""
@@ -1257,6 +1496,14 @@ class KisikiApp(ctk.CTk):
                 on_alert_sound_change=self.set_roulette_sound,
             )
         self.roulette_module.pack(fill="both", expand=True)
+
+    def open_bongo(self) -> None:
+        self.cancel_hold()
+        self.clear()
+        self.current_view = "bongo"
+        if self.bongo_module is None or not self.bongo_module.winfo_exists():
+            self.bongo_module = BongoModule(self.content, self.show_clicker)
+        self.bongo_module.pack(fill="both", expand=True)
 
 if __name__ == "__main__":
     KisikiApp().mainloop()
