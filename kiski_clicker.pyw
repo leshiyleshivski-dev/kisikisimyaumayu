@@ -300,6 +300,7 @@ class RouletteModule(ctk.CTkFrame):
         self.game_cursor_at: str | None = None
         self.game_window: int | None = None
         self.running = False
+        self.active = False
         self.next_run: float | None = None
         self.last_bet_started: float | None = None
         self.last_bet_completed: float | None = None
@@ -639,6 +640,17 @@ class RouletteModule(ctk.CTkFrame):
         self.timer.set("Таймер не запущен")
         self.status.set(message)
 
+    def activate(self) -> None:
+        """Разрешить горячие клавиши только открытому секретному модулю."""
+        self.active = True
+        self.keys = {key: bool(user32.GetAsyncKeyState(key) & 0x8000) for key in self.keys}
+
+    def deactivate(self, message: str) -> None:
+        """Остановить модуль при переходе в другую скрытую часть приложения."""
+        self.stop(message)
+        self.active = False
+        self.keys = {key: bool(user32.GetAsyncKeyState(key) & 0x8000) for key in self.keys}
+
     def execute_bets(self, return_previous: bool = True) -> bool:
         self.game_window = find_game_window(self.process.get())
         if not self.game_window:
@@ -788,7 +800,7 @@ class RouletteModule(ctk.CTkFrame):
         actions = {VK_F4: self.sync_game_cursor, VK_F9: self.toggle, VK_F11: lambda: self.stop("Экстренно остановлено.")}
         for key, action in actions.items():
             down = bool(user32.GetAsyncKeyState(key) & 0x8000)
-            if down and not self.keys[key]:
+            if self.active and down and not self.keys[key]:
                 action()
             self.keys[key] = down
         if self.winfo_exists():
@@ -810,6 +822,7 @@ class BongoModule(ctk.CTkFrame):
         super().__init__(parent, fg_color=APP_BG, corner_radius=0)
         self.on_back = on_back
         self.running = False
+        self.active = False
         self.phase = "idle"
         self.next_action: float | None = None
         self.game_window: int | None = None
@@ -968,6 +981,17 @@ class BongoModule(ctk.CTkFrame):
         self.timer.set("Таймер не запущен")
         self.status.set(message)
 
+    def activate(self) -> None:
+        """Разрешить F9/F11 только пока открыт экран Бонго."""
+        self.active = True
+        self.keys = {key: bool(user32.GetAsyncKeyState(key) & 0x8000) for key in self.keys}
+
+    def deactivate(self, message: str) -> None:
+        """Остановить таймер и перестать слушать горячие клавиши."""
+        self.stop(message)
+        self.active = False
+        self.keys = {key: bool(user32.GetAsyncKeyState(key) & 0x8000) for key in self.keys}
+
     def tick(self) -> None:
         if self.winfo_exists() and self.running and self.next_action is not None:
             now = time.monotonic()
@@ -990,7 +1014,7 @@ class BongoModule(ctk.CTkFrame):
         actions = {VK_F9: self.toggle, VK_F11: lambda: self.stop("Экстренно остановлено.")}
         for key, action in actions.items():
             down = bool(user32.GetAsyncKeyState(key) & 0x8000)
-            if down and not self.keys[key]:
+            if self.active and down and not self.keys[key]:
                 action()
             self.keys[key] = down
         if self.winfo_exists():
@@ -1486,6 +1510,8 @@ class KisikiApp(ctk.CTk):
 
     def open_roulette(self) -> None:
         self.cancel_hold()
+        if self.bongo_module is not None and self.bongo_module.winfo_exists():
+            self.bongo_module.deactivate("Остановлено: открыт модуль казино.")
         self.clear()
         self.current_view = "roulette"
         if self.roulette_module is None or not self.roulette_module.winfo_exists():
@@ -1496,14 +1522,18 @@ class KisikiApp(ctk.CTk):
                 on_alert_sound_change=self.set_roulette_sound,
             )
         self.roulette_module.pack(fill="both", expand=True)
+        self.roulette_module.activate()
 
     def open_bongo(self) -> None:
         self.cancel_hold()
+        if self.roulette_module is not None and self.roulette_module.winfo_exists():
+            self.roulette_module.deactivate("Остановлено: открыт модуль телефона.")
         self.clear()
         self.current_view = "bongo"
         if self.bongo_module is None or not self.bongo_module.winfo_exists():
             self.bongo_module = BongoModule(self.content, self.show_clicker)
         self.bongo_module.pack(fill="both", expand=True)
+        self.bongo_module.activate()
 
 if __name__ == "__main__":
     KisikiApp().mainloop()
