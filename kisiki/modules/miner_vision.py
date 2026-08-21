@@ -27,7 +27,10 @@ ORE_NAMES = dict(ORE_TYPES)
 # Ratios are shared by the 16:9 layouts. Full HD frames are normalized to the
 # 2K reference before fixed-size component and OCR checks are applied.
 OVERLAY_SAMPLE_RATIO = (0.30, 0.20, 0.42, 0.58)
-TARGET_SEARCH_RATIO = (0.37, 0.24, 0.26, 0.49)
+# The right-hand rock can extend past 65% of the frame on some camera angles.
+# Keep the crop centered on the rug, but include the full outer edge of both
+# rocks so a final inclusion there cannot be silently clipped.
+TARGET_SEARCH_RATIO = (0.35, 0.24, 0.33, 0.49)
 TOAST_TEXT_RATIO = (0.412, 0.935, 0.148, 0.037)
 MINING_PROGRESS_RATIO = (0.82, 0.90, 0.175, 0.065)
 REFERENCE_WIDTH = 2560
@@ -117,17 +120,26 @@ def _large_rock_mask(search: np.ndarray) -> np.ndarray:
     hsv = cv2.cvtColor(search, cv2.COLOR_BGR2HSV)
     blue_gray = cv2.inRange(hsv, (82, 15, 25), (138, 255, 220))
     blue_gray = cv2.morphologyEx(
-        blue_gray, cv2.MORPH_CLOSE, np.ones((31, 31), dtype=np.uint8),
+        blue_gray, cv2.MORPH_CLOSE, np.ones((9, 9), dtype=np.uint8),
     )
     component_count, labels, stats, _centroids = cv2.connectedComponentsWithStats(blue_gray)
     clean = np.zeros_like(blue_gray)
     for component in range(1, component_count):
         _x, _y, width, height, area = map(int, stats[component])
-        if 2_000 <= area <= 260_000 and 60 <= width <= 900 and 60 <= height <= 650:
-            clean[labels == component] = 255
+        if 50_000 <= area <= 260_000 and 150 <= width <= 900 and 150 <= height <= 650:
+            # The ore itself is often outside the blue/gray threshold. Filling
+            # the external rock contour keeps large black, gold and copper
+            # inclusions inside the permitted click area. A smaller closing
+            # kernel prevents the two rocks from being merged with the rug
+            # into one oversized component before this fill happens.
+            component_mask = np.uint8(labels == component) * 255
+            contours, _hierarchy = cv2.findContours(
+                component_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE,
+            )
+            cv2.drawContours(clean, contours, -1, 255, thickness=cv2.FILLED)
     if not np.count_nonzero(clean):
         clean = blue_gray
-    return cv2.dilate(clean, np.ones((13, 13), dtype=np.uint8))
+    return cv2.dilate(clean, np.ones((9, 9), dtype=np.uint8))
 
 
 def _component_targets(
@@ -139,7 +151,9 @@ def _component_targets(
     offset_y: int,
     hue_channel: np.ndarray | None = None,
     saturation_channel: np.ndarray | None = None,
+    value_channel: np.ndarray | None = None,
     minimum_area: int | None = None,
+    minimum_core_value: float | None = None,
 ) -> list[tuple[int, int, float, str]]:
     raw_mask = candidate & (rock_mask > 0)
     mask = np.uint8(raw_mask) * 255
@@ -162,6 +176,7 @@ def _component_targets(
                 (minimum_area or 45) <= area <= 1_000
                 and 7 <= width <= 60
                 and 7 <= height <= 60
+                and 0.3 <= width / max(1, height) <= 3.0
                 and fill >= 0.16
                 and (area >= 200 or fill >= 0.48)
                 # Closing is useful for the faceted ore sprites, but can also
@@ -171,6 +186,11 @@ def _component_targets(
                 and raw_coverage >= 0.24
                 and not touches_search_side_or_bottom
             )
+            if accepted and value_channel is not None and minimum_core_value is not None:
+                raw_component = component_mask & raw_mask
+                accepted = bool(np.any(raw_component)) and (
+                    float(np.mean(value_channel[raw_component])) >= minimum_core_value
+                )
             score = 100.0 + min(area, 700) / 100.0 + fill
         else:
             accepted = (
@@ -291,7 +311,12 @@ def find_ore_targets(image: np.ndarray) -> list[tuple[int, int, float, str]]:
     )
     targets.extend(_component_targets(
         cyan, rock_mask, kind="color", offset_x=offset_x, offset_y=offset_y,
-        minimum_area=250,
+        # Cyan inclusions lose more edge pixels than warm ones after GTA's
+        # scaling/JPEG-like capture softness, especially when they are the
+        # final tiny piece. The rock contour and compact-shape checks keep the
+        # lower area threshold constrained to the actual stone.
+        minimum_area=150,
+        value_channel=value, minimum_core_value=175,
     ))
     targets.extend(_component_targets(
         neutral, rock_mask, kind="neutral", offset_x=offset_x, offset_y=offset_y,
