@@ -116,6 +116,29 @@ class MinerVisionTests(unittest.TestCase):
             self.assertTrue(has_target_near(targets, point, radius=20), (point, targets))
         self.assertEqual(len(targets), 3)
 
+    def test_final_inclusion_at_right_rock_edge_is_detected(self) -> None:
+        frame = np.zeros((FRAME_HEIGHT, FRAME_WIDTH, 3), dtype=np.uint8)
+
+        def hsv_color(hue: int, saturation: int, value: int) -> tuple[int, int, int]:
+            pixel = np.uint8([[[hue, saturation, value]]])
+            blue, green, red = cv2.cvtColor(pixel, cv2.COLOR_HSV2BGR)[0, 0]
+            return int(blue), int(green), int(red)
+
+        cv2.rectangle(
+            frame, (760, 280), (1840, 1120), hsv_color(160, 120, 135), -1,
+        )
+        cv2.ellipse(
+            frame, (1530, 640), (170, 210), 0, 0, 360,
+            hsv_color(105, 100, 145), -1,
+        )
+        expected = (1655, 640)
+        cv2.circle(frame, expected, 16, hsv_color(20, 210, 220), -1)
+
+        targets = find_ore_targets(frame)
+
+        self.assertEqual(len(targets), 1, targets)
+        self.assertTrue(has_target_near(targets, expected, radius=12), targets)
+
     def test_known_notification_words_are_classified(self) -> None:
         for filename, expected in (
             ("toast-chrome.png", "chrome"),
