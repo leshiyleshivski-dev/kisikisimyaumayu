@@ -12,7 +12,10 @@ a = Analysis(
     binaries=[],
     datas=[
         (str(here / "kiski kartinki"), "kiski kartinki"),
+        (str(here / "assets" / "cats"), "assets/cats"),
         (str(here / "sounds"), "sounds"),
+        (str(here / "assets" / "food"), "assets/food"),
+        (str(here / "assets" / "ores"), "assets/ores"),
         (str(here / "orange_cat.ico"), "."),
     ],
     hiddenimports=["customtkinter"],
