@@ -18,7 +18,8 @@ from ..core import (
 from ..clicker import today_key
 from .miner_vision import (
     ORE_NAMES, ORE_TYPES, find_ore_targets, is_supported_miner_resolution,
-    miner_overlay_visible, mining_progress_visible, read_ore_notification,
+    miner_overlay_visible, mining_progress_fill, mining_progress_visible,
+    read_ore_notification,
 )
 from .ui import connection_panel, hotkey_bar, module_header, panel
 
@@ -27,17 +28,63 @@ class MinerModule(ctk.CTkFrame):
     """Mine one rock per F9 press and keep confirmed quarry statistics."""
 
     SCAN_INTERVAL_MS = 55
-    STRIKE_INTERVAL_RANGE_SECONDS = (0.95, 1.25)
+    # How the swing cycle actually works, measured frame by frame on the
+    # recordings of 22.08 (see tests/fixtures/miner/README.md):
+    #
+    #   credited step -> the game ignores the mouse for about 0.75 s
+    #                 -> a click after that starts the next swing
+    #                 -> the step is credited ~0.30 s later
+    #
+    # So the floor is ~1.05 s per hit, and hitting it is purely a question of
+    # placing one click just after the deaf window ends. Clicking earlier is
+    # not merely wasted: the click is dropped, and the module then sits out its
+    # whole fallback interval, which is how the swing rate fell to 2.0 s.
+    STRIKE_READY_DELAY_RANGE_SECONDS = (0.78, 0.88)
+    # A click that still landed too early is dropped silently - the only sign
+    # is that no step arrives. Retry after a gap slightly longer than the
+    # ~0.30 s it takes a good click to be credited, so a swing that did land
+    # reschedules from its own step and the retry never fires: one click per
+    # hit in the normal case, and a 0.45 s recovery when a click was missed.
+    STRIKE_RETRY_RANGE_SECONDS = (0.42, 0.52)
+    # Used only before the first step has been credited, when there is nothing
+    # to lock onto yet.
+    STRIKE_INTERVAL_RANGE_SECONDS = (0.45, 0.60)
     STRIKE_HOLD_RANGE_SECONDS = (0.055, 0.12)
-    MAX_STRIKING_SECONDS = 38.0
+    # A swing moves the bar by 4-10% depending on the rock.
+    PROGRESS_STEP = 0.03
+    # Safety nets only - a rock really ends when the bar disappears. They are
+    # counted in credited hits now: while this limit counted clicks, a rock
+    # needing 15 hits burned through 24 "strikes" in half a minute and the
+    # module walked away from a stone it was still working (a 1.5 s freeze at
+    # 32.9 s of the 08-12-31 recording). Rocks take 10-16 hits; the bar cannot
+    # step by less than about 4%, so 25 is the most a stone can need.
+    MAX_STRIKING_SECONDS = 42.0
     MAX_STRIKES = 30
+    # Clicks are not hits: an early one is dropped. Bound them separately so a
+    # rock that never credits cannot turn into an endless click stream.
+    MAX_STRIKE_CLICKS = 70
+    STRIKE_OBSERVE_INTERVAL_SECONDS = 0.08
+    PROGRESS_MISSING_FRAMES = 3
     ACTIVATION_TIMEOUT_SECONDS = 5.0
     TARGET_STALL_SECONDS = 6.0
     TARGET_SETTLE_RANGE_SECONDS = (0.20, 0.34)
     TARGET_RETRY_SECONDS = 0.50
     MAX_ATTEMPTS_PER_TARGET = 3
+    # Three clicks half a second apart are all inside one short stretch of
+    # time, and the game does refuse a sprite for a while: on the 10-43-16
+    # table the module clicked a gold inclusion dead centre three times with
+    # no effect, gave up, and the player collected that very sprite by hand
+    # seventeen seconds later. So an exhausted target is not a lost one - it
+    # goes back into the queue after a wait, instead of the table standing
+    # open and idle for the rest of its life.
+    TARGET_COOLDOWN_SECONDS = 2.5
+    MAX_TARGET_ROUNDS = 4
     RESULT_TIMEOUT_SECONDS = 7.0
     MAX_TARGET_ATTEMPTS = 45
+    # Phases from which E may start the next rock. The result check is
+    # included on purpose: it runs for several seconds after a rock is
+    # worked out, and the player is usually at the next stone by then.
+    ARMABLE_PHASES = ("watching", "waiting_result")
 
     def __init__(
         self,
@@ -62,9 +109,15 @@ class MinerModule(ctk.CTkFrame):
         self.previous_window: int | None = None
         self.saved_cursor: tuple[int, int] | None = None
         self.strike_count = 0
+        self.strike_clicks = 0
         self.target_attempts = 0
+        self.target_rounds = 0
         self.target_history: list[tuple[int, int, int, float]] = []
         self.overlay_missing_frames = 0
+        self.progress_missing_frames = 0
+        self.progress_confirmed = False
+        self.progress_fill: float | None = None
+        self.result_allows_table = False
         self.phase_started_at = 0.0
         self.next_action_at = 0.0
         self.last_capture_at = 0.0
@@ -135,7 +188,7 @@ class MinerModule(ctk.CTkFrame):
         ).pack(anchor="w", padx=12, pady=(10, 5))
         ctk.CTkLabel(
             automation,
-            text="F9 включается один раз · E ставит камень в ожидание\nУдары — только после синей полосы · затем точечный сбор руды",
+            text="F9 включается один раз · E ставит камень в ожидание\nУдары идут, пока горит синяя полоса · затем точечный сбор руды",
             font=ctk.CTkFont("Segoe UI", 8, "bold"), text_color=accent,
             justify="left",
         ).pack(anchor="w", padx=12, pady=(0, 10))
@@ -346,16 +399,22 @@ class MinerModule(ctk.CTkFrame):
         )
 
     def _arm_cycle(self) -> None:
-        if not self.running or self.phase != "watching":
+        if not self.running or self.phase not in self.ARMABLE_PHASES:
             return
         if not self._foreground_is_game():
             self.status.set("Нажатие E замечено, но GTA не активна — клики не отправлены.")
             return
         self.saved_cursor = cursor_position()
         self.strike_count = 0
+        self.strike_clicks = 0
         self.target_attempts = 0
+        self.target_rounds = 0
         self.target_history.clear()
         self.overlay_missing_frames = 0
+        self.progress_missing_frames = 0
+        self.progress_confirmed = False
+        self.progress_fill = None
+        self.result_allows_table = False
         self.phase = "arming"
         self.phase_started_at = time.monotonic()
         self.next_action_at = self.phase_started_at + random.uniform(0.28, 0.45)
@@ -369,6 +428,7 @@ class MinerModule(ctk.CTkFrame):
         self.target_attempts = 0
         self.target_history.clear()
         self.overlay_missing_frames = 0
+        self.result_allows_table = False
         self.phase = "collecting"
         self.phase_started_at = now
         self.last_target_at = now
@@ -376,34 +436,119 @@ class MinerModule(ctk.CTkFrame):
         self.stage.set("СОБИРАЮ РУДУ")
         self.status.set(message)
 
+    def _enter_result_wait(self, now: float, message: str, *, allow_table: bool = False) -> None:
+        """Stop every click and watch for the ore notification.
+
+        ``allow_table`` is set only when the strike phase ended by itself: the
+        sorting table can open a moment after the rock is worked out. Coming
+        back from an already finished table must not re-enter collecting,
+        otherwise the same inclusions would be clicked a second time.
+        """
+        self.restore_cursor()
+        self.phase = "waiting_result"
+        self.phase_started_at = now
+        self.result_allows_table = allow_table
+        self.overlay_missing_frames = 0
+        self.stage.set("ПРОВЕРЯЮ РЕЗУЛЬТАТ")
+        self.status.set(message)
+
+    def _pause_for_manual_review(self, now: float, message: str) -> None:
+        """Keep auto-detect enabled while the player finishes this table."""
+        self.restore_cursor()
+        if not self.running:
+            return
+        self.phase = "manual_review"
+        self.phase_started_at = now
+        self.overlay_missing_frames = 0
+        self.stage.set("НУЖНА РУЧНАЯ ПРОВЕРКА")
+        self.status.set(
+            f"{message}\nАвтодетект остаётся включён. Закончи этот стол вручную — "
+            "после его закрытия программа продолжит со следующим камнем."
+        )
+        self.main_button.configure(
+            text="Выключить автодетект  ·  F9", fg_color="#E95E69",
+            hover_color="#C94C57", text_color=TEXT,
+        )
+
     def _foreground_is_game(self) -> bool:
         return bool(self.game_window and user32.GetForegroundWindow() == self.game_window)
 
     def _strike_step(self, now: float) -> None:
-        if now < self.next_action_at:
-            return
         if not self._foreground_is_game():
             self.stop("Добыча остановлена: GTA потеряла фокус до завершения ударов.")
             return
-        captured = self.capture_game_image()
-        if captured is None:
-            self.stop("Потеряно окно GTA во время ударов по камню.")
+        # The screen is inspected between strikes and not only right before the
+        # next one. A rock is finished in ten to fifteen swings, so a check
+        # tied to the click schedule noticed the end a whole strike too late.
+        if now - self.last_capture_at >= self.STRIKE_OBSERVE_INTERVAL_SECONDS:
+            self.last_capture_at = now
+            captured = self.capture_game_image()
+            if captured is None:
+                self.stop("Потеряно окно GTA во время ударов по камню.")
+                return
+            image = captured[0]
+            if miner_overlay_visible(image):
+                self._enter_collecting(now, "Стол появился — прекращаю удары и собираю включения.")
+                return
+            # The blue «Добыча руды» bar is Majestic's own "this rock is still
+            # being mined" flag: it disappears as soon as the rock is worked
+            # out. Ending the strike phase on its loss is what keeps the
+            # pickaxe from swinging at an already empty spot.
+            fill = mining_progress_fill(image)
+            if fill is not None:
+                self.progress_confirmed = True
+                self.progress_missing_frames = 0
+                # A step on the bar is the one honest signal that a swing
+                # landed, so it is what the counter reports and what the whole
+                # phase is timed from. Counting clicks instead showed two hits
+                # where the character had made one.
+                if (
+                    self.progress_fill is not None
+                    and fill - self.progress_fill >= self.PROGRESS_STEP
+                ):
+                    self.strike_count += 1
+                    self.next_action_at = now + random.uniform(
+                        *self.STRIKE_READY_DELAY_RANGE_SECONDS
+                    )
+                    self.stage.set(f"УДАР {self.strike_count} · ДОБЫЧА ИДЁТ")
+                    self.status.set(
+                        f"Разбиваю камень. Полоса добычи: {fill * 100:.0f}%."
+                    )
+                self.progress_fill = fill
+            elif self.progress_confirmed:
+                self.progress_missing_frames += 1
+                if self.progress_missing_frames >= self.PROGRESS_MISSING_FRAMES:
+                    self._enter_result_wait(
+                        now,
+                        f"Полоса «Добыча руды» пропала после {self.strike_count} "
+                        "ударов — камень отработан. Клики прекращены.",
+                        allow_table=True,
+                    )
+                    return
+        if now < self.next_action_at:
             return
-        if miner_overlay_visible(captured[0]):
-            self._enter_collecting(now, "Стол появился — прекращаю удары и собираю включения.")
-            return
-        if now - self.phase_started_at >= self.MAX_STRIKING_SECONDS or self.strike_count >= self.MAX_STRIKES:
-            self.stop("Стол с рудой не появился после 30 ударов. Автодетект остановлен без дальнейших кликов.")
+        if (
+            now - self.phase_started_at >= self.MAX_STRIKING_SECONDS
+            or self.strike_count >= self.MAX_STRIKES
+            or self.strike_clicks >= self.MAX_STRIKE_CLICKS
+        ):
+            self.finish(
+                f"Полоса «Добыча руды» не пропала за {self.strike_count} ударов. "
+                "Клики прекращены, но автодетект остаётся включён."
+            )
             return
         hold_seconds = random.uniform(*self.STRIKE_HOLD_RANGE_SECONDS)
         if not send_left_click(hold_seconds):
             self.stop("Windows не принял левый клик. Добыча остановлена.")
             return
-        self.strike_count += 1
-        self.stage.set(f"УДАР {self.strike_count} · ЖДУ СТОЛ")
-        delay = random.uniform(*self.STRIKE_INTERVAL_RANGE_SECONDS)
-        self.status.set(f"Разбиваю камень. Следующий удар примерно через {delay:.1f} с.")
-        self.next_action_at = now + delay
+        self.strike_clicks += 1
+        # This click either starts a swing or was still inside the deaf window
+        # and was dropped. Only a step on the bar tells the two apart, so retry
+        # soon and let the step reschedule properly when it arrives.
+        self.next_action_at = now + random.uniform(
+            *(self.STRIKE_RETRY_RANGE_SECONDS if self.strike_count
+              else self.STRIKE_INTERVAL_RANGE_SECONDS)
+        )
 
     def _arming_step(self, now: float) -> None:
         """Wait for Majestic to acknowledge E before sending any mouse input."""
@@ -429,6 +574,10 @@ class MinerModule(ctk.CTkFrame):
             self.phase = "striking"
             self.phase_started_at = now
             self.next_action_at = now
+            self.last_capture_at = now
+            self.progress_confirmed = True
+            self.progress_missing_frames = 0
+            self.progress_fill = mining_progress_fill(image)
             self.stage.set("ДОБЫЧА ПОДТВЕРЖДЕНА")
             self.status.set("Полоса «Добыча руды» появилась. Начинаю бить камень.")
             return
@@ -486,6 +635,19 @@ class MinerModule(ctk.CTkFrame):
         self.target_history[index] = (old_x, old_y, attempts, now)
         return attempts
 
+    def _retry_round(self, now: float) -> bool:
+        """Forgive the attempt counts once more, so a stubborn sprite is retried.
+
+        Returns ``False`` once the rounds are used up, and the caller falls
+        through to the manual-review pause it always had.
+        """
+        if self.target_rounds >= self.MAX_TARGET_ROUNDS:
+            return False
+        self.target_rounds += 1
+        self.target_history.clear()
+        self.last_target_at = now
+        return True
+
     def _collecting_step(self, now: float) -> None:
         if now < self.next_action_at:
             return
@@ -500,11 +662,9 @@ class MinerModule(ctk.CTkFrame):
         if not miner_overlay_visible(image):
             self.overlay_missing_frames += 1
             if self.overlay_missing_frames >= 2:
-                self.phase = "waiting_result"
-                self.phase_started_at = now
-                self.stage.set("ПРОВЕРЯЮ РЕЗУЛЬТАТ")
-                self.status.set("Мини-игра закрылась. Жду уведомление о полученной руде.")
-                self.restore_cursor()
+                self._enter_result_wait(
+                    now, "Мини-игра закрылась. Жду уведомление о полученной руде.",
+                )
             return
         self.overlay_missing_frames = 0
         if not self._foreground_is_game():
@@ -530,17 +690,49 @@ class MinerModule(ctk.CTkFrame):
                 + (f" (попытка {target_attempt})." if target_attempt > 1 else ".")
             )
             if self.target_attempts >= self.MAX_TARGET_ATTEMPTS:
-                self.stop("Достигнут безопасный лимит кликов. Мини-игра осталась открыта.")
+                self._pause_for_manual_review(
+                    clicked_at,
+                    "Достигнут безопасный лимит кликов. Мини-игра осталась открыта.",
+                )
             return
         if detected:
-            if now - self.last_target_at >= self.TARGET_STALL_SECONDS:
-                self.stop(
+            if now - self.last_target_at >= self.TARGET_COOLDOWN_SECONDS and self._retry_round(now):
+                self.status.set(
+                    f"Вкрапления не поддались — захожу на них ещё раз "
+                    f"(круг {self.target_rounds})."
+                )
+            elif now - self.last_target_at >= self.TARGET_STALL_SECONDS:
+                self._pause_for_manual_review(
+                    now,
                     "Вкрапления не исчезли после повторных кликов. Ничего не считаю завершённым — оставил игру для ручной проверки."
                 )
             else:
                 self.status.set("Вкрапления ещё видны. Жду реакцию игры или готовлю повторный клик.")
         elif now - self.last_target_at >= self.TARGET_STALL_SECONDS:
-            self.stop("Стол всё ещё открыт, но руда не распознана. Ничего не считаю завершённым — оставил игру для ручной проверки.")
+            self._pause_for_manual_review(
+                now,
+                "Стол всё ещё открыт, но руда не распознана. Ничего не считаю завершённым — оставил игру для ручной проверки.",
+            )
+
+    def _manual_review_step(self, now: float) -> None:
+        """Observe without clicking until the manually completed table closes."""
+        if now - self.last_capture_at < 0.16:
+            return
+        self.last_capture_at = now
+        captured = self.capture_game_image()
+        if captured is None:
+            self.stop("Потеряно окно GTA во время ручной проверки.")
+            return
+        image, _bounds = captured
+        if miner_overlay_visible(image):
+            self.overlay_missing_frames = 0
+            return
+        self.overlay_missing_frames += 1
+        if self.overlay_missing_frames >= 2:
+            self._enter_result_wait(
+                now,
+                "Стол закрыт вручную. Жду уведомление о руде; автодетект остаётся включён.",
+            )
 
     def _waiting_result_step(self, now: float) -> None:
         if now - self.last_capture_at < 0.12:
@@ -551,6 +743,9 @@ class MinerModule(ctk.CTkFrame):
             self.stop("Потеряно окно GTA до подтверждения результата.")
             return
         image, _bounds = captured
+        if self.result_allows_table and miner_overlay_visible(image):
+            self._enter_collecting(now, "Стол открылся после ударов. Ищу включения на камнях.")
+            return
         toast_present, ore_key, _score = read_ore_notification(image)
         if toast_present:
             message = self.record_result(ore_key)
@@ -620,6 +815,8 @@ class MinerModule(ctk.CTkFrame):
                 self._strike_step(now)
             elif self.phase == "collecting":
                 self._collecting_step(now)
+            elif self.phase == "manual_review":
+                self._manual_review_step(now)
             elif self.phase == "waiting_result":
                 self._waiting_result_step(now)
         if self.winfo_exists():
@@ -634,7 +831,7 @@ class MinerModule(ctk.CTkFrame):
             self.keys[key] = down
         e_down = bool(user32.GetAsyncKeyState(VK_E) & 0x8000)
         if (
-            self.active and self.running and self.phase == "watching"
+            self.active and self.running and self.phase in self.ARMABLE_PHASES
             and e_down and not self.keys[VK_E]
         ):
             self._arm_cycle()

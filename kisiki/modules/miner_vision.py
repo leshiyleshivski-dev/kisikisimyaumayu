@@ -35,6 +35,13 @@ TOAST_TEXT_RATIO = (0.412, 0.935, 0.148, 0.037)
 MINING_PROGRESS_RATIO = (0.82, 0.90, 0.175, 0.065)
 REFERENCE_WIDTH = 2560
 REFERENCE_HEIGHT = 1440
+# A worked-out stone keeps shrinking; only props and rug pattern are excluded.
+ROCK_MIN_AREA = 16_000
+# Wider than any ore sprite, so a top-hat keeps inclusions and drops the rock.
+# A rectangle is what makes this affordable: OpenCV runs it as two separable
+# passes, while the same job with an elliptical element costs forty times more
+# and would stall the collecting loop between clicks.
+INCLUSION_KERNEL = cv2.getStructuringElement(cv2.MORPH_RECT, (71, 71))
 
 
 def is_supported_2k(width: int, height: int) -> bool:
@@ -106,40 +113,306 @@ def mining_progress_visible(image: np.ndarray) -> bool:
         _x, _y, width, height, area = map(int, stats[component])
         fill = area / max(1, width * height)
         if (
-            width >= max(18, round(frame_width * 0.007))
+            # The real track is about 230 px wide at 2K. The old floor of 18 px
+            # accepted any blue sliver, and at night the bluish ground under
+            # the player produced one every few frames - the module then took
+            # a walk between rocks for an accepted mining interaction.
+            width >= max(120, round(frame_width * 0.05))
             and 2 <= height <= 18
-            and width / max(1, height) >= 4.0
-            and area >= 40
+            and width / max(1, height) >= 8.0
+            and area >= 400
             and fill >= 0.45
         ):
             return True
     return False
 
 
+def mining_progress_fill(image: np.ndarray) -> float | None:
+    """Return how full the ``Добыча руды`` bar is, or ``None`` if it is absent.
+
+    Every accepted pickaxe swing moves the bar one step of about a tenth of
+    its length. Reading that step is what lets the controller strike in the
+    rhythm the game actually grants instead of on a fixed timer: the character
+    used to finish a swing, stand idle for half a second and only then get the
+    next click.
+    """
+    if image is None or image.size == 0:
+        return None
+    image, _scale_x, _scale_y = _normalize_detection_frame(image)
+    progress, _left, _top = _ratio_crop(image, MINING_PROGRESS_RATIO)
+    hsv = cv2.cvtColor(progress, cv2.COLOR_BGR2HSV)
+    track = cv2.morphologyEx(
+        cv2.inRange(hsv, (90, 80, 70), (125, 255, 255)),
+        cv2.MORPH_CLOSE, np.ones((3, 5), dtype=np.uint8),
+    )
+    count, _labels, stats, _centroids = cv2.connectedComponentsWithStats(track)
+    frame_width = image.shape[1]
+    # The widget draws the track and its lit head as separate strips; take the
+    # span of every bar-shaped piece rather than betting on one of them.
+    pieces = [
+        (x, y, width, height)
+        for x, y, width, height, area in (map(int, stats[component]) for component in range(1, count))
+        if width >= max(120, round(frame_width * 0.05))
+        and 2 <= height <= 18
+        and width / max(1, height) >= 8.0
+        and area >= 400
+        and area / max(1, width * height) >= 0.45
+    ]
+    if not pieces:
+        return None
+    left = min(x for x, _y, _w, _h in pieces)
+    right = max(x + width for x, _y, width, _h in pieces)
+    top = min(y for _x, y, _w, _h in pieces)
+    bottom = max(y + height for _x, y, _w, height in pieces)
+    # The filled head of the bar is the same hue but noticeably lighter.
+    band = hsv[max(0, top - 2):bottom + 2, left:right]
+    filled = cv2.inRange(band, (90, 60, 150), (125, 255, 255))
+    columns = np.where(filled.sum(axis=0) > 0)[0]
+    if not len(columns):
+        return 0.0
+    return float(min(1.0, (int(columns.max()) + 1) / max(1, right - left)))
+
+
+def _filled_contour(mask: np.ndarray) -> np.ndarray:
+    """Fill a silhouette to its outer contour.
+
+    The ore itself is often outside the stone threshold. Filling the external
+    contour keeps black, gold and copper inclusions inside the clickable area.
+    """
+    contours, _hierarchy = cv2.findContours(
+        mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE,
+    )
+    filled = np.zeros_like(mask)
+    cv2.drawContours(filled, contours, -1, 255, thickness=cv2.FILLED)
+    return filled
+
+
+def _looks_like_stone(
+    filled: np.ndarray, width: int, height: int, area: int, rug: np.ndarray,
+) -> bool:
+    """Judge one filled silhouette against the shape a stone always has."""
+    if not (ROCK_MIN_AREA <= area <= 260_000):
+        return False
+    if not (90 <= width <= 900 and 90 <= height <= 650):
+        return False
+    if not 0.45 <= width / max(1, height) <= 2.2:
+        return False
+    if np.count_nonzero(filled) / max(1, width * height) < 0.60:
+        return False
+    ring = (
+        cv2.dilate(filled, np.ones((41, 41), dtype=np.uint8)) > 0
+    ) & (filled == 0)
+    return not (np.any(ring) and float(np.mean(rug[ring] > 0)) < 0.55)
+
+
+def _split_touching_stones(
+    filled: np.ndarray, rug: np.ndarray,
+) -> list[np.ndarray]:
+    """Pull a blob of two neighbouring stones apart and judge them separately.
+
+    Two stones lying side by side bridge into a single component: the closing
+    that heals speckle in the colour mask also closes the narrow strip of rug
+    between them. The merged bounding box is then mostly that gap, its fill
+    lands near 0.53 and the pair is thrown away -- on a night table that left
+    the whole tray to the "anything that is not rug" rescue below, which has no
+    notion of where one stone ends, and a rock's worth of ore went uncollected.
+    """
+    # The ladder has to reach far enough to break the widest bridge the rug
+    # closing can build: on the 10-43-16 table the two stones only came apart
+    # at 41, and stopping at 27 left the pair rejected. Trying the small
+    # kernels first keeps a narrow bridge from over-eroding the stones.
+    for kernel_size in (9, 17, 25, 33, 41):
+        kernel = np.ones((kernel_size, kernel_size), dtype=np.uint8)
+        eroded = cv2.erode(filled, kernel)
+        count, labels, stats, _centroids = cv2.connectedComponentsWithStats(eroded)
+        cores = [core for core in range(1, count) if stats[core, 4] >= ROCK_MIN_AREA // 3]
+        if len(cores) < 2:
+            continue
+        accepted: list[np.ndarray] = []
+        for core in cores:
+            grown = cv2.dilate(np.uint8(labels == core) * 255, kernel) & filled
+            part_count, part_labels, part_stats, _part_centroids = (
+                cv2.connectedComponentsWithStats(grown)
+            )
+            if part_count < 2:
+                continue
+            largest = max(range(1, part_count), key=lambda part: part_stats[part, 4])
+            _x, _y, width, height, area = map(int, part_stats[largest])
+            part = _filled_contour(np.uint8(part_labels == largest) * 255)
+            if _looks_like_stone(part, width, height, area, rug):
+                accepted.append(part)
+        # One good half and one bad one means the blob was a stone touching a
+        # prop, not a pair of stones. Only a clean split is trusted.
+        if len(accepted) >= 2:
+            return accepted
+    return []
+
+
+def _stones_from(candidate: np.ndarray, rug: np.ndarray) -> np.ndarray:
+    """Keep the components of ``candidate`` that behave like a stone.
+
+    A stone shrinks as it is worked out, so bulk area is not what makes it a
+    stone. What holds for every one of them is a compact, roughly equant
+    silhouette lying on an unbroken pink field. The rug's patterned border,
+    the props on its corners and the progress note fail one of those: they are
+    either ragged, far too elongated, or not surrounded by rug.
+    """
+    component_count, labels, stats, _centroids = cv2.connectedComponentsWithStats(candidate)
+    stones = np.zeros_like(candidate)
+    for component in range(1, component_count):
+        _x, _y, width, height, area = map(int, stats[component])
+        if area < ROCK_MIN_AREA:
+            continue
+        filled = _filled_contour(np.uint8(labels == component) * 255)
+        if _looks_like_stone(filled, width, height, area, rug):
+            stones |= filled
+            continue
+        for part in _split_touching_stones(filled, rug):
+            stones |= part
+    return stones
+
+
 def _large_rock_mask(search: np.ndarray) -> np.ndarray:
+    """Return the stones lying on the rug, filled to their outer contour."""
     hsv = cv2.cvtColor(search, cv2.COLOR_BGR2HSV)
     blue_gray = cv2.inRange(hsv, (82, 15, 25), (138, 255, 220))
+    # A smaller closing kernel prevents the two rocks from being merged with
+    # the rug into one oversized component before the contour fill happens.
     blue_gray = cv2.morphologyEx(
         blue_gray, cv2.MORPH_CLOSE, np.ones((9, 9), dtype=np.uint8),
     )
-    component_count, labels, stats, _centroids = cv2.connectedComponentsWithStats(blue_gray)
-    clean = np.zeros_like(blue_gray)
-    for component in range(1, component_count):
-        _x, _y, width, height, area = map(int, stats[component])
-        if 50_000 <= area <= 260_000 and 150 <= width <= 900 and 150 <= height <= 650:
-            # The ore itself is often outside the blue/gray threshold. Filling
-            # the external rock contour keeps large black, gold and copper
-            # inclusions inside the permitted click area. A smaller closing
-            # kernel prevents the two rocks from being merged with the rug
-            # into one oversized component before this fill happens.
-            component_mask = np.uint8(labels == component) * 255
-            contours, _hierarchy = cv2.findContours(
-                component_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE,
-            )
-            cv2.drawContours(clean, contours, -1, 255, thickness=cv2.FILLED)
+    rug = cv2.inRange(hsv, (145, 35, 65), (179, 255, 255))
+    clean = _stones_from(blue_gray, rug)
+    if not np.count_nonzero(clean):
+        # Sunset and storm light can push a stone right out of the blue/grey
+        # window, and then nothing on the table was clickable at all. Anything
+        # compact that is *not* rug is a stone by elimination.
+        not_rug = cv2.morphologyEx(
+            cv2.bitwise_not(cv2.morphologyEx(
+                cv2.inRange(hsv, (140, 25, 50), (179, 255, 255)),
+                cv2.MORPH_CLOSE, np.ones((15, 15), dtype=np.uint8),
+            )),
+            cv2.MORPH_OPEN, np.ones((9, 9), dtype=np.uint8),
+        )
+        clean = _stones_from(not_rug, rug)
     if not np.count_nonzero(clean):
         clean = blue_gray
     return cv2.dilate(clean, np.ones((9, 9), dtype=np.uint8))
+
+
+def _is_compact(labels: np.ndarray, component: int, area: int) -> bool:
+    """Ore sprites are convex lumps; rock shading that survives a filter is not.
+
+    This one test removed almost every false click on a finished table, where
+    facets, cracks and rim shadows used to be offered as ore and were then
+    clicked three times each before being retired.
+    """
+    component_mask = np.uint8(labels == component) * 255
+    contours, _hierarchy = cv2.findContours(
+        component_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE,
+    )
+    if not contours:
+        return False
+    hull_area = cv2.contourArea(cv2.convexHull(contours[0]))
+    return area / max(1.0, hull_area) >= 0.65
+
+
+def _hue_gap(hue: np.ndarray | float, reference: float) -> np.ndarray | float:
+    """Shortest distance on the circular OpenCV hue scale (0..179)."""
+    distance = np.abs(np.asarray(hue, dtype=np.float32) - reference)
+    return np.minimum(distance, 180.0 - distance)
+
+
+def _rock_relative_targets(
+    search: np.ndarray,
+    rock_mask: np.ndarray,
+    *,
+    offset_x: int,
+    offset_y: int,
+) -> list[tuple[int, int, float, str]]:
+    """Find compact patches whose colour differs from the stone they sit on.
+
+    Fixed HSV windows cannot describe ore across weather, time of day and rock
+    type, which is why a single dark inclusion was regularly left behind on a
+    table where the bright ones were collected. What does hold everywhere is
+    that an inclusion differs from *its own* stone: another hue, or far less
+    colour than the stone (black, grey and white ore). The deviation is passed
+    through a morphological top-hat, so only structures smaller than the
+    kernel survive - the stone's own facets, cracks and shadows are large and
+    share its colour, and drop out before anything is thresholded.
+    """
+    body = rock_mask > 0
+    if not np.any(body):
+        return []
+    # Ore lies on the stone, never on its silhouette. Dark bays along the rim
+    # are the one shape that survives the top-hat while not being ore at all.
+    inner = cv2.erode(rock_mask, np.ones((27, 27), dtype=np.uint8)) > 0
+    hsv = cv2.cvtColor(search, cv2.COLOR_BGR2HSV)
+    # Stones are not convex, and the mask is grown outwards to keep ore that
+    # sits right on the edge. Both let rug inside the searched area, and pink
+    # rug against a blue stone is the strongest colour deviation on the whole
+    # table: it used to form a ring along the entire silhouette that swallowed
+    # every inclusion near the edge into one ragged, unclickable blob.
+    rug = cv2.dilate(
+        cv2.inRange(hsv, (140, 30, 45), (179, 255, 255)),
+        np.ones((3, 3), dtype=np.uint8),
+    ) > 0
+    body &= ~rug
+    hue, saturation, value = [channel.astype(np.float32) for channel in cv2.split(hsv)]
+    rock_hue = float(np.median(hue[body]))
+    rock_saturation = float(np.median(saturation[body]))
+
+    deviation = np.uint8(np.clip(
+        _hue_gap(hue, rock_hue) * 3.0 + np.clip(rock_saturation - saturation, 0, 255),
+        0, 255,
+    ))
+    brightness = np.uint8(value)
+    candidate = cv2.morphologyEx(deviation, cv2.MORPH_TOPHAT, INCLUSION_KERNEL) >= 150
+    # A grey stone gives no colour contrast at all; there brightness is the
+    # only thing an inclusion can differ in. The threshold stays high and fixed
+    # on purpose: every attempt to scale it down to the stone's own smoothness
+    # started offering shadowed folds as ore on the recorded tables.
+    candidate |= cv2.morphologyEx(
+        brightness, cv2.MORPH_TOPHAT, INCLUSION_KERNEL) >= 150
+    candidate |= cv2.morphologyEx(
+        brightness, cv2.MORPH_BLACKHAT, INCLUSION_KERNEL) >= 150
+    candidate &= body
+
+    mask = np.uint8(candidate) * 255
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((5, 5), dtype=np.uint8))
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((3, 3), dtype=np.uint8))
+    count, labels, stats, centroids = cv2.connectedComponentsWithStats(mask)
+
+    targets: list[tuple[int, int, float, str]] = []
+    for component in range(1, count):
+        _x, _y, width, height, area = map(int, stats[component])
+        if not (150 <= area <= 6_000 and 10 <= width <= 95 and 10 <= height <= 95):
+            continue
+        if not 0.4 <= width / max(1, height) <= 2.5:
+            continue
+        fill = area / max(1, width * height)
+        if fill < 0.35:
+            continue
+        if not _is_compact(labels, component, area):
+            continue
+        # A gap in the stone is rug through and through; a red or copper
+        # sprite only has a rim of pixels that read as rug, so the bar is
+        # set where a whole patch of rug sits and a sprite never does.
+        if float(np.mean(rug[labels == component])) >= 0.5:
+            continue
+        center_x, center_y = centroids[component]
+        if not inner[
+            min(inner.shape[0] - 1, max(0, round(float(center_y)))),
+            min(inner.shape[1] - 1, max(0, round(float(center_x)))),
+        ]:
+            continue
+        targets.append((
+            offset_x + round(float(center_x)),
+            offset_y + round(float(center_y)),
+            60.0 + min(area, 2_000) / 200.0 + fill * 4.0,
+            "ore",
+        ))
+    return targets
 
 
 def _component_targets(
@@ -266,6 +539,97 @@ def _component_targets(
     return targets
 
 
+def _adaptive_contrast_targets(
+    search: np.ndarray,
+    rock_mask: np.ndarray,
+    *,
+    offset_x: int,
+    offset_y: int,
+) -> list[tuple[int, int, float, str]]:
+    """Find compact local outliers relative to the surface of each rock.
+
+    Ore sprites are not guaranteed to keep one absolute HSV colour: sunlight,
+    weather and post-processing change both the inclusion and the stone around
+    it.  This fallback compares every pixel with a blurred local model of that
+    *same* stone.  It is intentionally used only when the stricter colour and
+    neutral detectors found nothing, so rock texture cannot outrank a known ore
+    colour.
+    """
+    hsv = cv2.cvtColor(search, cv2.COLOR_BGR2HSV)
+    lab = cv2.cvtColor(search, cv2.COLOR_BGR2LAB).astype(np.float32)
+    saturation = hsv[:, :, 1].astype(np.float32)
+    value = hsv[:, :, 2].astype(np.float32)
+
+    # A broad blur is a local estimate of the uninterrupted rock surface.  Lab
+    # distance catches hue changes while the S/V terms retain black and silver
+    # inclusions whose hue is unstable at low saturation.
+    local_lab = cv2.GaussianBlur(lab, (0, 0), 13.0)
+    local_saturation = cv2.GaussianBlur(saturation, (0, 0), 13.0)
+    local_value = cv2.GaussianBlur(value, (0, 0), 13.0)
+    lab_delta = np.linalg.norm(lab - local_lab, axis=2)
+    saturation_delta = np.abs(saturation - local_saturation)
+    value_delta = np.abs(value - local_value)
+
+    candidate = (
+        ((lab_delta >= 25.0) & ((saturation_delta >= 20.0) | (value_delta >= 18.0)))
+        | ((local_value - value >= 24.0) & (value <= 100.0))
+        | ((value - local_value >= 28.0) & (saturation_delta >= 12.0))
+    )
+    candidate &= rock_mask > 0
+    mask = np.uint8(candidate) * 255
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((5, 5), dtype=np.uint8))
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((3, 3), dtype=np.uint8))
+
+    count, labels, stats, centroids = cv2.connectedComponentsWithStats(mask)
+    targets: list[tuple[int, int, float, str]] = []
+    for component in range(1, count):
+        x, y, width, height, area = map(int, stats[component])
+        fill = area / max(1, width * height)
+        if not (
+            150 <= area <= 3_200
+            and 10 <= width <= 86
+            and 10 <= height <= 110
+            and 0.35 <= width / max(1, height) <= 2.8
+            and fill >= 0.35
+        ):
+            continue
+        if not _is_compact(labels, component, area):
+            continue
+
+        component_mask = labels == component
+        nearby = cv2.dilate(
+            np.uint8(component_mask) * 255,
+            np.ones((25, 25), dtype=np.uint8),
+        ) > 0
+        ring = nearby & ~component_mask & (rock_mask > 0)
+        if np.count_nonzero(ring) < 80:
+            continue
+
+        component_lab = np.mean(lab[component_mask], axis=0)
+        ring_lab = np.mean(lab[ring], axis=0)
+        colour_contrast = float(np.linalg.norm(component_lab - ring_lab))
+        value_contrast = abs(float(np.mean(value[component_mask]) - np.mean(value[ring])))
+        saturation_contrast = abs(
+            float(np.mean(saturation[component_mask]) - np.mean(saturation[ring]))
+        )
+        if not (
+            colour_contrast >= 22.0
+            or value_contrast >= 24.0
+            or saturation_contrast >= 32.0
+        ):
+            continue
+
+        center_x, center_y = centroids[component]
+        score = 20.0 + colour_contrast + value_contrast * 0.25 + fill * 2.0
+        targets.append((
+            offset_x + round(float(center_x)),
+            offset_y + round(float(center_y)),
+            score,
+            "adaptive",
+        ))
+    return targets
+
+
 def _merge_nearby_targets(targets: list[tuple[int, int, float, str]]) -> list[tuple[int, int, float, str]]:
     merged: list[tuple[int, int, float, str]] = []
     for target in sorted(targets, key=lambda item: item[2], reverse=True):
@@ -322,6 +686,19 @@ def find_ore_targets(image: np.ndarray) -> list[tuple[int, int, float, str]]:
         neutral, rock_mask, kind="neutral", offset_x=offset_x, offset_y=offset_y,
         hue_channel=hue, saturation_channel=saturation,
     ))
+    # The absolute masks are precise but blind to ore they were not tuned for.
+    # The rock-relative pass is run on every frame, not only as a rescue, so a
+    # dark inclusion is collected in the same sweep as the bright ones instead
+    # of being left on a table the module already considers finished.
+    targets.extend(_rock_relative_targets(
+        search, rock_mask, offset_x=offset_x, offset_y=offset_y,
+    ))
+    # Local contrast stays the last resort for ore that matches neither its
+    # own stone nor any known colour.
+    if not targets:
+        targets = _adaptive_contrast_targets(
+            search, rock_mask, offset_x=offset_x, offset_y=offset_y,
+        )
     merged = _merge_nearby_targets(targets)
     if scale_x == 1.0 and scale_y == 1.0:
         return merged
