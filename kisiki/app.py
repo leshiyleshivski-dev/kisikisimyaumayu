@@ -16,9 +16,10 @@ from food_catalog import FOOD_CATALOG, FOOD_NAMES, SECRET_CAT_INDICES, SECRET_RE
 from secret_modules import SecretModuleManager
 
 from .core import (
-    APP_BG, CATS, CAT_CATEGORIES, GOLD, MINT, MUTED, PINK, PURPLE,
-    SOUND_FILES, SURFACE, SURFACE_ALT, SURFACE_HOVER, TEXT,
-    make_dpi_aware, progress_path, resource_path, rounded_photo, winmm,
+    APP_BG, CATS, CAT_CATEGORIES, COMING_SOON_CATS, GOLD, MINT, MUTED, PINK, PURPLE,
+    SURFACE, SURFACE_ALT, SURFACE_HOVER, TEXT,
+    cat_sound, make_dpi_aware, progress_path, release_source_images,
+    resource_path, rounded_photo, winmm,
 )
 from .clicker import (
     ACHIEVEMENTS, ADVENTURES, DECOR, UPGRADES, achievement_metric,
@@ -28,7 +29,8 @@ from .clicker import (
     today_key, upgrade_price as cat_upgrade_price,
 )
 from .modules import (
-    BongoModule, BuffTimingModule, ElectricianModule, MinerModule, RouletteModule,
+    BlackjackModule, BuilderModule, ElectricianModule, MinerModule, PhoneModule,
+    RaceBettorModule, RouletteModule, SlotSpinnerModule,
 )
 
 
@@ -44,6 +46,11 @@ GOLD = "#F2C66D"
 MINT = "#68D6B4"
 PINK = "#FF8F91"
 PURPLE = "#A994ED"
+
+# Каждый размер режется из оригинала отдельно, поэтому список нужен прогреву.
+# Дополняй его вместе с новыми вызовами photo()/food_photo().
+CAT_IMAGE_SIZES = ((125, 98), (320, 255), (54, 44), (64, 64))
+FOOD_IMAGE_SIZES = ((38, 38), (48, 48))
 
 class KisikiApp(ctk.CTk):
     def __init__(self) -> None:
@@ -76,6 +83,7 @@ class KisikiApp(ctk.CTk):
         self.images: dict[tuple[int, int, int], tk.PhotoImage] = {}
         self.food_images: dict[tuple[str, int, int], tk.PhotoImage] = {}
         self.click_effects: list[ctk.CTkLabel] = []
+        self.content_restore_job: str | None = None
         self.sound_aliases: set[str] = set()
         self.sound_sequence = 0
         self.content = ctk.CTkFrame(self, fg_color=APP_BG, corner_radius=0)
@@ -90,8 +98,8 @@ class KisikiApp(ctk.CTk):
                 on_alert_sound_change=self.set_roulette_sound,
             ),
         )
-        self.secret_modules.register("bongo", lambda: BongoModule(self.content, self.show_clicker))
-        self.secret_modules.register("buff", lambda: BuffTimingModule(self.content, self.show_clicker))
+        self.secret_modules.register("phone", lambda: PhoneModule(self.content, self.show_clicker))
+        self.secret_modules.register("builder", lambda: BuilderModule(self.content, self.show_clicker))
         self.secret_modules.register("volt", lambda: ElectricianModule(self.content, self.show_clicker))
         self.secret_modules.register(
             "miner",
@@ -102,11 +110,21 @@ class KisikiApp(ctk.CTk):
                 on_stats_change=self.save_game,
             ),
         )
+        self.secret_modules.register(
+            "race_bettor", lambda: RaceBettorModule(self.content, self.show_clicker)
+        )
+        self.secret_modules.register(
+            "slot_spinner", lambda: SlotSpinnerModule(self.content, self.show_clicker)
+        )
+        self.secret_modules.register(
+            "blackjack", lambda: BlackjackModule(self.content, self.show_clicker)
+        )
         # CTk иногда возвращает свою стандартную иконку позднее при старте.
         # Поэтому устанавливаем cat-иконку после полной инициализации окна.
         self.after(120, self.apply_window_icon)
         self.after(1000, self.passive_tick)
         self.show_home()
+        self.after(200, self.prewarm_images)
 
     @staticmethod
     def fresh_game() -> dict:
@@ -132,6 +150,7 @@ class KisikiApp(ctk.CTk):
             },
             "last_seen": time.time(),
             "cats": [fresh_cat() for _ in CATS],
+            "cat_roster_version": 2,
         }
 
     def load_game(self) -> dict:
@@ -172,7 +191,8 @@ class KisikiApp(ctk.CTk):
                 saved_cats = saved["cats"]
                 # Миграция от старого набора из шести мем-котов: сохраняем
                 # прогресс будущих Крупье, Звонка, Строителя и Электрика.
-                source_indices = (5, 1, 3, 4) if len(saved_cats) == 6 else range(len(CATS))
+                legacy_six = len(saved_cats) == 6 and int(saved.get("cat_roster_version", 0)) < 2
+                source_indices = (5, 1, 3, 4) if legacy_six else range(len(CATS))
                 for index, source_index in enumerate(source_indices):
                     if index >= len(CATS) or source_index >= len(saved_cats):
                         continue
@@ -291,9 +311,53 @@ class KisikiApp(ctk.CTk):
             self.food_images[key] = rounded_photo(path, width, height)
         return self.food_images[key]
 
+    def prewarm_images(self, queue: list[tuple[str, object]] | None = None) -> None:
+        """Нарезать оставшиеся размеры картинок в фоне, по одной за такт.
+
+        Домашний экран уже распаковал оригиналы котиков, поэтому прогрев
+        в основном лишь уменьшает готовые изображения. Разбивка по тактам
+        не даёт окну замереть, а в конце оригиналы уходят из памяти.
+        """
+        if self.closing:
+            return
+        if queue is None:
+            queue = [("cat", index) for index in range(len(CATS))]
+            queue += [("food", food_id) for food_id, _title, _filename in FOOD_CATALOG]
+        if not queue:
+            release_source_images()
+            return
+        kind, item = queue.pop()
+        if kind == "cat":
+            for width, height in CAT_IMAGE_SIZES:
+                self.photo(int(item), width, height)
+        else:
+            for width, height in FOOD_IMAGE_SIZES:
+                self.food_photo(str(item), width, height)
+        self.after(16, lambda rest=queue: self.prewarm_images(rest))
+
+    def hide_content_while_building(self) -> None:
+        """Собирать экран на скрытом контейнере, чтобы он не мерцал.
+
+        CTkScrollbar заканчивает отрисовку вызовом update_idletasks, то есть
+        заставляет Tk перерисовать окно на каждый добавленный виджет. Пока
+        контейнер не показан, эти перерисовки не видны, а сборка экрана
+        заодно идёт вдвое быстрее. Возвращаем контейнер через after —
+        таймерное событие переживает чужие update_idletasks, тогда как
+        after_idle показал бы наполовину собранный экран.
+        """
+        if self.content_restore_job is not None:
+            self.after_cancel(self.content_restore_job)
+        self.content.pack_forget()
+        self.content_restore_job = self.after(0, self.show_content)
+
+    def show_content(self) -> None:
+        self.content_restore_job = None
+        self.content.pack(fill="both", expand=True)
+
     def clear(self) -> None:
         self.cancel_hold()
         self.click_effects.clear()
+        self.hide_content_while_building()
         for child in self.content.winfo_children():
             if self.secret_modules.is_managed(child):
                 child.pack_forget()
@@ -462,7 +526,7 @@ class KisikiApp(ctk.CTk):
             return
         self.sound_sequence += 1
         alias = f"kiski_sfx_{self.sound_sequence}"
-        path = resource_path("sounds", SOUND_FILES[self.selected])
+        path = resource_path("sounds", cat_sound(self.selected))
         opened = winmm.mciSendStringW(f'open "{path}" type mpegvideo alias {alias}', None, 0, None)
         if opened != 0:
             return
@@ -487,6 +551,9 @@ class KisikiApp(ctk.CTk):
         if self.closing:
             return
         self.closing = True
+        if self.content_restore_job is not None:
+            self.after_cancel(self.content_restore_job)
+            self.content_restore_job = None
         self.recipe_unlock_pending = True
         self.secret_modules.deactivate_all("Приложение закрыто.")
         self.stop_all_sounds()
@@ -497,8 +564,13 @@ class KisikiApp(ctk.CTk):
     def show_home(self) -> None:
         self.clear()
         self.current_view = "home"
-        self.header("уютный клуб четырёх хвостов")
-        intro = ctk.CTkFrame(self.content, fg_color="#1D2838", corner_radius=22, border_width=1, border_color="#34445C")
+        self.header("уютный клуб хвостатых героев")
+        home = ctk.CTkScrollableFrame(
+            self.content, fg_color="transparent", corner_radius=0,
+            scrollbar_button_color="#33435A", scrollbar_button_hover_color="#405570",
+        )
+        home.pack(fill="both", expand=True)
+        intro = ctk.CTkFrame(home, fg_color="#1D2838", corner_radius=22, border_width=1, border_color="#34445C")
         intro.pack(fill="x", padx=42, pady=(0, 13))
         intro.grid_columnconfigure(0, weight=1)
         copy = ctk.CTkFrame(intro, fg_color="transparent")
@@ -516,7 +588,7 @@ class KisikiApp(ctk.CTk):
         self.refresh_home_balance()
         self.refresh_daily_button()
         if self.offline_reward:
-            offline = ctk.CTkFrame(self.content, fg_color="#17333C", corner_radius=14, border_width=1, border_color="#376274")
+            offline = ctk.CTkFrame(home, fg_color="#17333C", corner_radius=14, border_width=1, border_color="#376274")
             offline.pack(fill="x", padx=42, pady=(0, 10))
             ctk.CTkLabel(
                 offline, text=f"🌙  Пока тебя не было, котики намурчали {format_number(self.offline_reward)} мяу",
@@ -527,51 +599,65 @@ class KisikiApp(ctk.CTk):
         if active and active.get("kind") in ADVENTURES:
             self.home_adventure_text = ctk.StringVar()
             self.home_adventure_button = ctk.CTkButton(
-                self.content, textvariable=self.home_adventure_text, command=self.show_club, height=36, corner_radius=12,
+                home, textvariable=self.home_adventure_text, command=self.show_club, height=36, corner_radius=12,
                 fg_color="#243448", hover_color="#30445E", font=ctk.CTkFont("Segoe UI", 9, "bold"),
             )
             self.home_adventure_button.pack(fill="x", padx=42, pady=(0, 10))
             self.refresh_home_adventure()
 
-        title_row = ctk.CTkFrame(self.content, fg_color="transparent")
+        title_row = ctk.CTkFrame(home, fg_color="transparent")
         title_row.pack(fill="x", padx=42, pady=(1, 7))
         ctk.CTkLabel(title_row, text="КОТИКИ КЛУБА", font=ctk.CTkFont("Segoe UI", 11, "bold"), text_color=MUTED).pack(side="left")
-        ctk.CTkLabel(title_row, text="у каждого свой прогресс и магазин", font=ctk.CTkFont("Segoe UI", 9), text_color="#718097").pack(side="right")
-        grid = ctk.CTkFrame(self.content, fg_color="transparent")
+        ctk.CTkLabel(title_row, text="игровые котики и будущие новички", font=ctk.CTkFont("Segoe UI", 9), text_color="#718097").pack(side="right")
+        grid = ctk.CTkFrame(home, fg_color="transparent")
         grid.pack(fill="x", padx=36, pady=(0, 12))
-        for column in range(len(CATS)):
-            grid.grid_columnconfigure(column, weight=1)
+        cat_columns_count = 5
+        for column in range(cat_columns_count):
+            grid.grid_columnconfigure(column, weight=1, uniform="club_cat")
 
         category_styles = {
             "Сонные котики": ("☾", "#222E46", "#9EB4FF"),
             "Строитель": ("▦", "#3A3223", GOLD),
             "Электрик": ("⚡", "#20363A", "#72D7D2"),
             "Шахтёр": ("◆", "#3B3422", "#E2B85B"),
+            "Рыбак": ("♆", "#17383B", "#63C7BC"),
+            "Лудоманы": ("♠", "#392A42", "#D4A7FF"),
         }
-        for category in CAT_CATEGORIES:
-            cat_columns = [index for index, cat in enumerate(CATS) if cat[4] == category]
-            if not cat_columns:
-                continue
-            icon, background, accent = category_styles[category]
-            # A single widget avoids the rectangular seam that a transparent
-            # child label can leave over a rounded CTkFrame border.
-            category_bar = ctk.CTkLabel(
-                grid, text=f"{icon}  {category.upper()}  ·  {len(cat_columns)}",
-                height=34, fg_color=background, corner_radius=11,
-                font=ctk.CTkFont("Segoe UI", 10, "bold"), text_color=accent,
-            )
-            category_bar.grid(
-                row=0, column=cat_columns[0], columnspan=len(cat_columns),
-                padx=6, pady=(0, 7), sticky="ew",
-            )
+        for row_start in range(0, len(CATS), cat_columns_count):
+            row_cats = CATS[row_start:row_start + cat_columns_count]
+            segment_start = 0
+            while segment_start < len(row_cats):
+                category = row_cats[segment_start][4]
+                segment_end = segment_start + 1
+                while segment_end < len(row_cats) and row_cats[segment_end][4] == category:
+                    segment_end += 1
+                icon, background, accent = category_styles[category]
+                category_count = sum(1 for cat in CATS if cat[4] == category)
+                # A single widget avoids the rectangular seam that a transparent
+                # child label can leave over a rounded CTkFrame border.
+                category_bar = ctk.CTkLabel(
+                    grid, text=f"{icon}  {category.upper()}  ·  {category_count}",
+                    height=34, fg_color=background, corner_radius=11,
+                    font=ctk.CTkFont("Segoe UI", 10, "bold"), text_color=accent,
+                )
+                category_bar.grid(
+                    row=(row_start // cat_columns_count) * 2,
+                    column=segment_start, columnspan=segment_end - segment_start,
+                    padx=6, pady=(0, 7), sticky="ew",
+                )
+                segment_start = segment_end
 
         for index, (name, description, _filename, color, _category) in enumerate(CATS):
             card = ctk.CTkFrame(grid, fg_color=SURFACE, corner_radius=19, border_width=1, border_color="#303B50", cursor="hand2")
-            card.grid(row=1, column=index, padx=6, sticky="ew")
-            picture = ctk.CTkLabel(card, text="", image=self.photo(index, 155, 122), cursor="hand2")
+            card.grid(
+                row=(index // cat_columns_count) * 2 + 1,
+                column=index % cat_columns_count,
+                padx=6, pady=(0, 12), sticky="nsew",
+            )
+            picture = ctk.CTkLabel(card, text="", image=self.photo(index, 125, 98), cursor="hand2")
             picture.pack(pady=(15, 5))
             ctk.CTkLabel(card, text=name, font=ctk.CTkFont("Segoe UI", 16, "bold"), text_color=TEXT, cursor="hand2").pack()
-            ctk.CTkLabel(card, text=description, font=ctk.CTkFont("Segoe UI", 9), text_color=MUTED, cursor="hand2", wraplength=185).pack(padx=8, pady=(2, 10))
+            ctk.CTkLabel(card, text=description, font=ctk.CTkFont("Segoe UI", 9), text_color=MUTED, cursor="hand2", wraplength=140).pack(padx=8, pady=(2, 10))
             cat_meows = self.game["cats"][index]["meows"]
             cat_auto = cat_passive_income(self.game["cats"][index], self.game["decor"])
             cat_power = cat_click_power(self.game["cats"][index], self.game["decor"])
@@ -601,9 +687,59 @@ class KisikiApp(ctk.CTk):
                 widget.bind("<Enter>", lambda _event, target=card: target.configure(fg_color=SURFACE_HOVER, border_color="#536784"))
                 widget.bind("<Leave>", lambda _event, target=card: target.configure(fg_color=SURFACE, border_color="#303B50"))
 
+        planned_grid = ctk.CTkFrame(home, fg_color="transparent")
+        planned_grid.pack(fill="x", padx=36, pady=(0, 12))
+        for column in range(min(cat_columns_count, len(COMING_SOON_CATS))):
+            planned_grid.grid_columnconfigure(column, weight=1, uniform="planned_cat")
+
+        for row_start in range(0, len(COMING_SOON_CATS), cat_columns_count):
+            row_cats = COMING_SOON_CATS[row_start:row_start + cat_columns_count]
+            segment_start = 0
+            while segment_start < len(row_cats):
+                category = row_cats[segment_start][3]
+                segment_end = segment_start + 1
+                while segment_end < len(row_cats) and row_cats[segment_end][3] == category:
+                    segment_end += 1
+                icon, background, accent = category_styles[category]
+                category_count = sum(1 for cat in COMING_SOON_CATS if cat[3] == category)
+                ctk.CTkLabel(
+                    planned_grid, text=f"{icon}  {category.upper()}  ·  {category_count}",
+                    height=30, fg_color=background, corner_radius=10,
+                    font=ctk.CTkFont("Segoe UI", 9, "bold"), text_color=accent,
+                ).grid(
+                    row=(row_start // cat_columns_count) * 2,
+                    column=segment_start, columnspan=segment_end - segment_start,
+                    padx=6, pady=(0, 7), sticky="ew",
+                )
+                segment_start = segment_end
+
+        for index, (name, description, color, _category) in enumerate(COMING_SOON_CATS):
+            card = ctk.CTkFrame(
+                planned_grid, fg_color="#171F2B", corner_radius=16,
+                border_width=1, border_color="#2C3748",
+            )
+            card.grid(
+                row=(index // cat_columns_count) * 2 + 1,
+                column=index % cat_columns_count,
+                padx=6, pady=(0, 12), sticky="nsew",
+            )
+            ctk.CTkLabel(
+                card, text=name, font=ctk.CTkFont("Segoe UI", 14, "bold"),
+                text_color=color,
+            ).pack(padx=8, pady=(11, 1))
+            ctk.CTkLabel(
+                card, text=description, font=ctk.CTkFont("Segoe UI", 8),
+                text_color="#7F8B9D", wraplength=135,
+            ).pack(padx=8)
+            ctk.CTkLabel(
+                card, text="В РАЗРАБОТКЕ", height=24, corner_radius=8,
+                fg_color="#252D3A", font=ctk.CTkFont("Segoe UI", 8, "bold"),
+                text_color="#9AA6B7",
+            ).pack(fill="x", padx=10, pady=(8, 10))
+
         club_level, club_progress, club_needed = self.club_level()
         club_summary = ctk.CTkFrame(
-            self.content, fg_color="#182436", corner_radius=17,
+            home, fg_color="#182436", corner_radius=17,
             border_width=1, border_color="#30425A",
         )
         club_summary.pack(fill="x", padx=42, pady=(0, 18))
@@ -1492,10 +1628,13 @@ class KisikiApp(ctk.CTk):
         """
         stop_messages = {
             "roulette": "Остановлено: открыт модуль казино.",
-            "bongo": "Остановлено: открыт модуль телефона.",
-            "buff": "Остановлено: открыт модуль Баффа.",
+            "phone": "Остановлено: открыт модуль телефона.",
+            "builder": "Остановлено: открыт модуль строителя.",
             "volt": "Остановлено: открыт модуль электрика.",
             "miner": "Остановлено: открыт модуль шахтёра.",
+            "race_bettor": "Остановлено: открыт модуль ставок на скачки.",
+            "slot_spinner": "Остановлено: открыт модуль слотов.",
+            "blackjack": "Остановлено: открыт модуль блэкджека.",
         }
         self.cancel_hold()
         self.secret_modules.deactivate_others(secret_id, stop_messages[secret_id])

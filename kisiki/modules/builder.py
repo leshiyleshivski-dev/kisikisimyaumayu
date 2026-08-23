@@ -1,4 +1,4 @@
-"""Buff timing mini-game screen."""
+"""Builder timing mini-game screen."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from ..core import (
 )
 from .ui import connection_panel, hotkey_bar, module_header, panel, step_list
 
-class BuffTimingModule(ctk.CTkFrame):
+class BuilderModule(ctk.CTkFrame):
     SCAN_INTERVAL_MS = 8
     ZONE_CHANGE_PIXELS = 8
     BAR_MISSING_RESET_SECONDS = 0.45
@@ -29,6 +29,10 @@ class BuffTimingModule(ctk.CTkFrame):
         self.active = False
         self.running = False
         self.game_window: int | None = None
+        # stop() зовётся и до первого запуска по F9 — например когда соседний
+        # модуль просит деактивироваться, — поэтому окно должно быть готово
+        # к восстановлению сразу, а не только после toggle().
+        self.previous_window: int | None = None
         self.keys = {key: False for key in (VK_F9, VK_F11)}
         self.process = ctk.StringVar(value="GTA5.exe")
         self.connection = ctk.StringVar(value="Ищу GTA5.exe…")
@@ -44,61 +48,10 @@ class BuffTimingModule(ctk.CTkFrame):
         self.after(0, self.refresh_connection)
         self.after(self.SCAN_INTERVAL_MS, self.scan_tick)
 
-    def build_ui_legacy(self) -> None:
-        top = ctk.CTkFrame(self, fg_color="transparent")
-        top.pack(fill="x", padx=46, pady=(36, 30))
-        ctk.CTkButton(
-            top, text="←  К котикам", command=self.on_back, width=126, height=38,
-            corner_radius=12, fg_color="#26314E", hover_color="#344263",
-            font=ctk.CTkFont("Segoe UI", 12, "bold"),
-        ).pack(side="left")
-        title = ctk.CTkFrame(top, fg_color="transparent")
-        title.pack(side="right")
-        ctk.CTkLabel(title, text="BUFF TIMING", font=ctk.CTkFont("Segoe UI", 24, "bold"), text_color=TEXT).pack(anchor="e")
-        ctk.CTkLabel(title, text="ловит ритм строительной шкалы", font=ctk.CTkFont("Segoe UI", 11), text_color=MUTED).pack(anchor="e")
-
-        body = ctk.CTkFrame(self, fg_color="transparent")
-        body.pack(fill="both", expand=True, padx=46, pady=(0, 26))
-        connection = ctk.CTkFrame(body, corner_radius=22, fg_color=SURFACE)
-        connection.pack(fill="x", pady=(0, 16))
-        connection.grid_columnconfigure(1, weight=1)
-        ctk.CTkLabel(connection, text="ПОДКЛЮЧЕНИЕ К ИГРЕ", font=ctk.CTkFont("Segoe UI", 11, "bold"), text_color="#9EE0BE").grid(row=0, column=0, columnspan=2, padx=26, pady=(20, 8), sticky="w")
-        self.indicator = ctk.CTkLabel(connection, text="●", font=ctk.CTkFont(size=18), text_color="#F05A67")
-        self.indicator.grid(row=1, column=0, padx=(26, 10), pady=(0, 21))
-        ctk.CTkEntry(connection, textvariable=self.process, height=42, border_width=0, corner_radius=13, fg_color="#33453D", font=ctk.CTkFont("Segoe UI", 14)).grid(row=1, column=1, padx=(0, 12), pady=(0, 21), sticky="ew")
-        ctk.CTkButton(connection, text="Проверить", command=self.refresh_connection, width=122, height=42, corner_radius=13, fg_color="#4BB889", hover_color="#62C99B").grid(row=1, column=2, padx=(0, 26), pady=(0, 21))
-        ctk.CTkLabel(connection, textvariable=self.connection, font=ctk.CTkFont("Segoe UI", 11, "bold"), text_color=MUTED).grid(row=2, column=0, columnspan=3, padx=26, pady=(0, 17), sticky="w")
-
-        guide = ctk.CTkFrame(body, corner_radius=22, fg_color=SURFACE)
-        guide.pack(fill="x", pady=(0, 16))
-        ctk.CTkLabel(guide, text="КАК РАБОТАЕТ", font=ctk.CTkFont("Segoe UI", 11, "bold"), text_color="#9EE0BE").pack(anchor="w", padx=26, pady=(20, 10))
-        steps = (
-            ("1", "Запусти мини-игру", "В GTA должна быть видна шкала в правом нижнем углу."),
-            ("2", "Нажми F9", "Модуль откроет игру и начнёт отслеживать зелёный сектор."),
-            ("3", "Удар по бегунку", "Space нажимается один раз, когда розовый бегунок заходит в зелёный сектор."),
-        )
-        for number, heading, description in steps:
-            row = ctk.CTkFrame(guide, fg_color=SURFACE_ALT, corner_radius=14)
-            row.pack(fill="x", padx=22, pady=(0, 8))
-            ctk.CTkLabel(row, text=number, width=30, height=30, corner_radius=15, fg_color="#4BB889", text_color=TEXT, font=ctk.CTkFont("Segoe UI", 13, "bold")).pack(side="left", padx=(12, 12), pady=10)
-            copy = ctk.CTkFrame(row, fg_color="transparent")
-            copy.pack(side="left", fill="x", expand=True, pady=8)
-            ctk.CTkLabel(copy, text=heading, font=ctk.CTkFont("Segoe UI", 12, "bold"), text_color=TEXT).pack(anchor="w")
-            ctk.CTkLabel(copy, text=description, font=ctk.CTkFont("Segoe UI", 10), text_color=MUTED).pack(anchor="w")
-
-        self.main_button = ctk.CTkButton(body, text="Запустить ловлю  ·  F9", command=self.toggle, height=56, corner_radius=16, font=ctk.CTkFont("Segoe UI", 15, "bold"), fg_color="#4BB889", hover_color="#62C99B")
-        self.main_button.pack(fill="x", pady=(0, 14))
-        monitor = ctk.CTkFrame(body, corner_radius=18, fg_color=SURFACE_ALT, border_width=1, border_color="#3E5B4D")
-        monitor.pack(fill="x", pady=(0, 12))
-        ctk.CTkLabel(monitor, text="СОСТОЯНИЕ", font=ctk.CTkFont("Segoe UI", 10, "bold"), text_color="#9EE0BE").pack(pady=(14, 4))
-        ctk.CTkLabel(monitor, textvariable=self.target, font=ctk.CTkFont("Segoe UI", 20, "bold"), text_color=TEXT).pack(pady=(0, 5))
-        ctk.CTkLabel(monitor, textvariable=self.status, font=ctk.CTkFont("Segoe UI", 11), text_color=MUTED, wraplength=650, justify="center").pack(padx=22, pady=(0, 14))
-        ctk.CTkLabel(body, text="F9 — запуск / остановка     ·     F11 — экстренная остановка", font=ctk.CTkFont("Segoe UI", 11, "bold"), text_color="#9EE0BE").pack(pady=(0, 16))
-
     def build_ui(self) -> None:
         accent = "#68D6B4"
         module_header(
-            self, code="BT", title="Buff Timing",
+            self, code="BRK", title="Brick Timing",
             subtitle="точный удар по зелёной зоне строительной шкалы",
             accent=accent, on_back=self.on_back,
         )
@@ -111,8 +64,8 @@ class BuffTimingModule(ctk.CTkFrame):
 
         workspace = ctk.CTkFrame(body, fg_color="transparent")
         workspace.pack(fill="both", expand=True)
-        workspace.grid_columnconfigure(0, weight=6, uniform="buff")
-        workspace.grid_columnconfigure(1, weight=5, uniform="buff")
+        workspace.grid_columnconfigure(0, weight=6, uniform="builder")
+        workspace.grid_columnconfigure(1, weight=5, uniform="builder")
         workspace.grid_rowconfigure(0, weight=1)
 
         live = panel(workspace, "LIVE  /  ЗАХВАТ ШКАЛЫ", accent)

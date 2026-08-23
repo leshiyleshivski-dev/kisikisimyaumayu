@@ -61,65 +61,6 @@ class ElectricianModule(TumblerMixin, MazeMixin, CurrentGridMixin, ctk.CTkFrame)
         self.after(40, self.poll_hotkeys)
         self.after(0, self.refresh_connection)
 
-    def build_ui_legacy(self) -> None:
-        top = ctk.CTkFrame(self, fg_color="transparent")
-        top.pack(fill="x", padx=46, pady=(36, 22))
-        ctk.CTkButton(
-            top, text="←  К котикам", command=self.on_back, width=126, height=38,
-            corner_radius=12, fg_color="#26314E", hover_color="#344263",
-            font=ctk.CTkFont("Segoe UI", 12, "bold"),
-        ).pack(side="left")
-        title = ctk.CTkFrame(top, fg_color="transparent")
-        title.pack(side="right")
-        ctk.CTkLabel(title, text="VOLT GRID", font=ctk.CTkFont("Segoe UI", 24, "bold"), text_color=TEXT).pack(anchor="e")
-        ctk.CTkLabel(title, text="автодетектор электрических мини-игр", font=ctk.CTkFont("Segoe UI", 11), text_color=MUTED).pack(anchor="e")
-
-        body = ctk.CTkFrame(self, fg_color="transparent")
-        body.pack(fill="both", expand=True, padx=46, pady=(0, 24))
-        connection = ctk.CTkFrame(body, corner_radius=22, fg_color="#293B41", border_width=1, border_color="#42636B")
-        connection.pack(fill="x", pady=(0, 14))
-        connection.grid_columnconfigure(1, weight=1)
-        ctk.CTkLabel(connection, text="ПОДКЛЮЧЕНИЕ К GTA", font=ctk.CTkFont("Segoe UI", 11, "bold"), text_color="#9EE0BE").grid(row=0, column=0, columnspan=2, padx=26, pady=(18, 7), sticky="w")
-        self.indicator = ctk.CTkLabel(connection, text="●", font=ctk.CTkFont(size=18), text_color="#F05A67")
-        self.indicator.grid(row=1, column=0, padx=(26, 10), pady=(0, 17))
-        ctk.CTkEntry(connection, textvariable=self.process, height=40, border_width=0, corner_radius=13, fg_color="#33453D", font=ctk.CTkFont("Segoe UI", 14)).grid(row=1, column=1, padx=(0, 12), pady=(0, 17), sticky="ew")
-        ctk.CTkButton(connection, text="Проверить", command=self.refresh_connection, width=122, height=40, corner_radius=13, fg_color="#3A7781", hover_color="#4B9098").grid(row=1, column=2, padx=(0, 26), pady=(0, 17))
-        ctk.CTkLabel(connection, textvariable=self.connection, font=ctk.CTkFont("Segoe UI", 11, "bold"), text_color=MUTED).grid(row=2, column=0, columnspan=3, padx=26, pady=(0, 14), sticky="w")
-
-        cards = ctk.CTkFrame(body, fg_color="transparent")
-        cards.pack(fill="x")
-        for column in range(2):
-            cards.grid_columnconfigure(column, weight=1)
-        games = (
-            ("01", "Проведение тока", "ГОТОВО", "Распознаёт поле, строит схему и поворачивает плитки.", "#3A7781", "⚡"),
-            ("02", "Контроль напряжения", "СКОРО", "Зафиксировать стрелку в зелёной зоне.", "#4A4247", "⌁"),
-            ("03", "Тумблеры", "ГОТОВО", "Подбирает положения переключателей до успешного сочетания.", "#3A7781", "▣"),
-            ("04", "Электро-лабиринт", "ГОТОВО", "Находит точки A и Б, строит путь и проходит его.", "#3A7781", "◎"),
-        )
-        for index, (number, title, label, description, shade, icon) in enumerate(games):
-            card = ctk.CTkFrame(cards, corner_radius=18, fg_color=SURFACE, border_width=1, border_color="#3E5B61")
-            card.grid(row=index // 2, column=index % 2, padx=6, pady=6, sticky="ew")
-            ctk.CTkLabel(card, text=number, width=34, height=34, corner_radius=17, fg_color=shade, text_color=TEXT, font=ctk.CTkFont("Segoe UI", 11, "bold")).pack(side="left", padx=(15, 10), pady=14)
-            copy = ctk.CTkFrame(card, fg_color="transparent")
-            copy.pack(side="left", fill="x", expand=True, pady=12)
-            ctk.CTkLabel(copy, text=title, font=ctk.CTkFont("Segoe UI", 12, "bold"), text_color=TEXT).pack(anchor="w")
-            ctk.CTkLabel(copy, text=f"{label} · {description}", font=ctk.CTkFont("Segoe UI", 9), text_color="#9EE0BE" if label == "ГОТОВО" else MUTED, wraplength=270, justify="left").pack(anchor="w", pady=(2, 0))
-            ctk.CTkLabel(card, text=icon, width=35, font=ctk.CTkFont("Segoe UI Symbol", 20, "bold"), text_color="#F1C94A").pack(side="right", padx=(4, 14))
-
-        guide = ctk.CTkFrame(body, corner_radius=20, fg_color=SURFACE, border_width=1, border_color="#3E5B61")
-        guide.pack(fill="x", pady=(12, 14))
-        ctk.CTkLabel(guide, text="АВТООПРЕДЕЛЕНИЕ ЭКРАНА", font=ctk.CTkFont("Segoe UI", 11, "bold"), text_color="#9EE0BE").pack(anchor="w", padx=22, pady=(16, 5))
-        ctk.CTkLabel(guide, text="Нажми F9 один раз перед началом работы. Вольт будет ждать вызовы, сам распознавать проведение тока, тумблеры и электролабиринт, решать их и снова переходить в режим ожидания.", font=ctk.CTkFont("Segoe UI", 10), text_color=MUTED, justify="left", wraplength=700).pack(anchor="w", padx=22, pady=(0, 15))
-
-        self.main_button = ctk.CTkButton(body, text="Включить автодетект  ·  F9", command=self.toggle, height=54, corner_radius=16, font=ctk.CTkFont("Segoe UI", 15, "bold"), fg_color="#3A7781", hover_color="#4B9098")
-        self.main_button.pack(fill="x", pady=(0, 12))
-        monitor = ctk.CTkFrame(body, corner_radius=18, fg_color=SURFACE_ALT, border_width=1, border_color="#3E5B61")
-        monitor.pack(fill="x")
-        ctk.CTkLabel(monitor, text="СОСТОЯНИЕ", font=ctk.CTkFont("Segoe UI", 10, "bold"), text_color="#9EE0BE").pack(pady=(13, 3))
-        ctk.CTkLabel(monitor, textvariable=self.target, font=ctk.CTkFont("Segoe UI", 16, "bold"), text_color=TEXT).pack(pady=(0, 4))
-        ctk.CTkLabel(monitor, textvariable=self.status, font=ctk.CTkFont("Segoe UI", 10), text_color=MUTED, wraplength=700, justify="center").pack(padx=22, pady=(0, 13))
-        ctk.CTkLabel(body, text="F9 — включить или выключить автодетект     ·     F11 — экстренно остановить", font=ctk.CTkFont("Segoe UI", 10, "bold"), text_color="#9EE0BE").pack(pady=(13, 0))
-
     def build_ui(self) -> None:
         accent = "#72D7D2"
         module_header(

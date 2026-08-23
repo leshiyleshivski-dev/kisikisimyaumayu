@@ -14,7 +14,7 @@ from ..core import (
 )
 from .ui import connection_panel, hotkey_bar, module_header, panel, step_list
 
-class BongoModule(ctk.CTkFrame):
+class PhoneModule(ctk.CTkFrame):
     SECOND_TAP_SECONDS = 3
     CYCLE_DELAY_SECONDS = (7 * 60, 9 * 60)
     RECONNECT_SECONDS = 5
@@ -32,7 +32,7 @@ class BongoModule(ctk.CTkFrame):
         self.keys = {key: False for key in (VK_F9, VK_F11)}
         self.process = ctk.StringVar(value="GTA5.exe")
         self.connection = ctk.StringVar(value="Ищу GTA5.exe…")
-        self.status = ctk.StringVar(value="Готов к ритму Бонго.")
+        self.status = ctk.StringVar(value="Готов к ритму звонка.")
         self.timer = ctk.StringVar(value="Таймер не запущен")
         self.build_ui()
         self.after(40, self.poll_hotkeys)
@@ -42,7 +42,7 @@ class BongoModule(ctk.CTkFrame):
     def build_ui(self) -> None:
         accent = "#FF9D76"
         module_header(
-            self, code="BG", title="Bongo Beat",
+            self, code="PH", title="Phone Beat",
             subtitle="ритм из двух нажатий с автоматическим повтором",
             accent=accent, on_back=self.back,
         )
@@ -55,8 +55,8 @@ class BongoModule(ctk.CTkFrame):
 
         workspace = ctk.CTkFrame(body, fg_color="transparent")
         workspace.pack(fill="both", expand=True)
-        workspace.grid_columnconfigure(0, weight=6, uniform="bongo")
-        workspace.grid_columnconfigure(1, weight=5, uniform="bongo")
+        workspace.grid_columnconfigure(0, weight=6, uniform="phone")
+        workspace.grid_columnconfigure(1, weight=5, uniform="phone")
         workspace.grid_rowconfigure(0, weight=1)
 
         live = panel(workspace, "LIVE  /  СОСТОЯНИЕ РИТМА", accent)
@@ -191,7 +191,7 @@ class BongoModule(ctk.CTkFrame):
         self.status.set(message)
 
     def activate(self) -> None:
-        """Разрешить F9/F11 только пока открыт экран Бонго."""
+        """Разрешить F9/F11 только пока открыт экран звонка."""
         self.active = True
         self.keys = {key: bool(user32.GetAsyncKeyState(key) & 0x8000) for key in self.keys}
 

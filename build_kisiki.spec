@@ -16,6 +16,7 @@ a = Analysis(
         (str(here / "sounds"), "sounds"),
         (str(here / "assets" / "food"), "assets/food"),
         (str(here / "assets" / "ores"), "assets/ores"),
+        (str(here / "assets" / "vision"), "assets/vision"),
         (str(here / "orange_cat.ico"), "."),
     ],
     hiddenimports=["customtkinter"],
@@ -25,6 +26,10 @@ a = Analysis(
     excludes=[],
     noarchive=False,
 )
+# Кодеки видео тянут за собой 12 МБ, а приложение только снимает экран и
+# разбирает кадры: ни VideoCapture, ни imshow в коде нет.
+a.binaries = [entry for entry in a.binaries if "opencv_videoio_ffmpeg" not in entry[0]]
+
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 exe = EXE(
     pyz, a.scripts, a.binaries, a.zipfiles, a.datas, [],

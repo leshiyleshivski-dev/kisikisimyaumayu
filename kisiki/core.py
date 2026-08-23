@@ -30,20 +30,37 @@ CATS = (
     ("Кирпич", "ловит идеальный момент", "assets/cats/04_builder_cat.png", "#E3A642", "Строитель"),
     ("Вольт", "пока просто следит за проводами", "assets/cats/03_electrician_cat.png", "#F1C94A", "Электрик"),
     ("Кварц", "выбивает самоцветы из упрямых камней", "assets/cats/05_miner_cat.png", "#E2B85B", "Шахтёр"),
+    ("Фаворит", "угадывает победителя по усам", "assets/cats/07_race_bettor_cat.png", "#F2C66D", "Лудоманы"),
+    ("Семёрка", "слушает звон барабанов", "assets/cats/08_slot_cat.png", "#D4A7FF", "Лудоманы"),
+    ("Туз", "знает, когда хватит карт", "assets/cats/10_blackjack_cat.png", "#68D6B4", "Лудоманы"),
 )
 
-CAT_CATEGORIES = ("Сонные котики", "Строитель", "Электрик", "Шахтёр")
+COMING_SOON_CATS = (
+    ("Поплавок", "ждёт большого клёва", "#63C7BC", "Рыбак"),
+    ("Фишка", "копит фишки на удачу", "#FF8F91", "Лудоманы"),
+    ("Занос", "мечтает о большом выигрыше", "#75A7FF", "Лудоманы"),
+)
 
+CAT_CATEGORIES = (
+    "Сонные котики", "Строитель", "Электрик", "Шахтёр", "Рыбак", "Лудоманы",
+)
+
+# Звук берётся по индексу котика из CATS. Список намеренно может быть короче
+# CATS: у новых котиков своего звука ещё нет, и им играет заглушка. Раньше
+# здесь стоял прямой SOUND_FILES[index], который уронил бы игру на седьмом
+# котике. Свой звук добавляется просто — вписать файл на нужную позицию.
 SOUND_FILES = (
     "smug_laugh.mp3", "bongo_drums.mp3", "orange_boing.mp3",
-    "buff_impact.mp3", "keyboard_type.mp3", "grumpy_trombone.mp3",
+    "buff_impact.mp3", "keyboard_type.mp3",
 )
-UPGRADES = {
-    "paw": ("Лапка", "+1 к клику", 25, "#D88470"),
-    "treat": ("Лакомство", "+1 мяу / сек", 90, "#CFA05C"),
-    "laser": ("Лазер", "+3 к клику", 260, "#AF86CA"),
-}
+PLACEHOLDER_SOUND = "grumpy_trombone.mp3"
 
+
+def cat_sound(index: int) -> str:
+    """Файл звука для котика; без своего звука отдаёт заглушку."""
+    if 0 <= index < len(SOUND_FILES):
+        return SOUND_FILES[index]
+    return PLACEHOLDER_SOUND
 
 def resource_path(*parts: str) -> Path:
     """Путь работает одинаково для исходника и собранного приложения."""
@@ -51,9 +68,35 @@ def resource_path(*parts: str) -> Path:
     return root.joinpath(*parts)
 
 
+# Исходные PNG котиков весят больше мегабайта (1254x1254), и распаковка
+# каждого стоит ~300 мс. Раньше один и тот же файл читался заново на каждый
+# новый размер, поэтому экран рецептов подвисал на полторы секунды. Теперь
+# распакованный оригинал живёт в кеше, а нарезка размеров стоит миллисекунды.
+_SOURCE_IMAGES: dict[str, tk.PhotoImage] = {}
+
+
+def source_photo(path: Path) -> tk.PhotoImage:
+    """Распакованный оригинал; повторные обращения берутся из кеша."""
+    key = str(path)
+    image = _SOURCE_IMAGES.get(key)
+    if image is None:
+        image = tk.PhotoImage(file=key)
+        _SOURCE_IMAGES[key] = image
+    return image
+
+
+def release_source_images() -> None:
+    """Отпустить оригиналы, когда все нужные размеры уже нарезаны.
+
+    Готовые уменьшенные копии не зависят от оригинала, поэтому после прогрева
+    приложение освобождает десятки мегабайт распакованных пикселей.
+    """
+    _SOURCE_IMAGES.clear()
+
+
 def rounded_photo(path: Path, max_width: int, max_height: int) -> tk.PhotoImage:
     """Tk умеет показывать PNG без дополнительных библиотек; масштабируем кратно."""
-    image = tk.PhotoImage(file=str(path))
+    image = source_photo(path)
     width, height = image.width(), image.height()
     factor = max(1, (max(width / max_width, height / max_height) + 0.999).__int__())
     return image.subsample(factor, factor)
@@ -83,6 +126,9 @@ kernel32.QueryFullProcessImageNameW.argtypes = (
 kernel32.QueryFullProcessImageNameW.restype = wintypes.BOOL
 
 VK_SPACE, VK_UP, VK_F4, VK_F9, VK_F11 = 0x20, 0x26, 0x73, 0x78, 0x7A
+VK_RETURN = 0x0D
+VK_LEFT, VK_RIGHT = 0x25, 0x27
+VK_F = 0x46
 VK_E = 0x45
 VK_W, VK_A, VK_S, VK_D = 0x57, 0x41, 0x53, 0x44
 MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP = 0x0002, 0x0004
@@ -95,8 +141,6 @@ BLACK_DIAMOND_RATIO = (1706 / 2560, 980 / 1440)
 GAME_CURSOR_DISTANCE_MULTIPLIER = 1.5
 GAME_ROUND_SECONDS = 56
 BET_DELAY_SECONDS = (7 * 60, 9 * 60)
-SAFE_TIMER_MIN_SECONDS = 10
-SAFE_TIMER_MAX_SECONDS = 34
 TIME_READOUT_RATIO = (0.948, 0.892, 0.048, 0.055)
 TIMER_SCAN_INTERVAL_SECONDS = 0.25
 TIMER_ACTIVATE_SETTLE_SECONDS = 0.8

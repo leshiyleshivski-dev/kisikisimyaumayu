@@ -10,6 +10,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from kisiki.core import (  # noqa: E402
+    CATS,
+    PLACEHOLDER_SOUND,
+    SOUND_FILES,
+    cat_sound,
+)
 from kisiki.clicker import (  # noqa: E402
     adventure_reward,
     achievement_metric,
@@ -148,6 +154,30 @@ class ClickerProgressionTests(unittest.TestCase):
         self.assertEqual(format_number(999), "999")
         self.assertEqual(format_number(12_500), "12,5 тыс.")
         self.assertEqual(format_number(2_000_000), "2 млн")
+
+
+class CatSoundTests(unittest.TestCase):
+    """Звук не должен ронять игру, когда котиков больше, чем звуков."""
+
+    def test_each_listed_sound_belongs_to_its_cat(self) -> None:
+        for index, filename in enumerate(SOUND_FILES):
+            self.assertEqual(cat_sound(index), filename)
+
+    def test_cats_without_a_sound_get_the_placeholder(self) -> None:
+        # Ровно тот случай, ради которого функция и появилась: котиков в CATS
+        # становится больше, чем записей в SOUND_FILES.
+        for index in range(len(SOUND_FILES), len(SOUND_FILES) + 6):
+            self.assertEqual(cat_sound(index), PLACEHOLDER_SOUND)
+
+    def test_every_current_cat_resolves_to_a_file_on_disk(self) -> None:
+        for index in range(len(CATS)):
+            self.assertTrue(
+                (ROOT / "sounds" / cat_sound(index)).is_file(),
+                f"нет файла звука для котика {index}: {cat_sound(index)}",
+            )
+
+    def test_placeholder_file_exists(self) -> None:
+        self.assertTrue((ROOT / "sounds" / PLACEHOLDER_SOUND).is_file())
 
 
 if __name__ == "__main__":

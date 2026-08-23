@@ -35,17 +35,23 @@ FOOD_NAMES = {food_id: title for food_id, title, _filename in FOOD_CATALOG}
 # Рецепты пасхалок. Кормилка передаёт эту последовательность RecipeProgress.
 SECRET_RECIPES = (
     ("roulette", "RLT CONTROL", ("fish", "tuna_can", "salmon")),
-    ("bongo", "BONGO BEAT", ("milk", "sausage", "cat_treat")),
-    ("buff", "BUFF TIMING", ("chicken", "carrot", "pumpkin")),
+    ("phone", "PHONE BEAT", ("milk", "sausage", "cat_treat")),
+    ("builder", "BRICK TIMING", ("chicken", "carrot", "pumpkin")),
     ("volt", "VOLT GRID", ("cheese", "shrimp", "mystery_meal")),
     ("miner", "ORE HUNT", ("kibble", "burger", "milk")),
+    ("race_bettor", "RACE BETTOR", ("carrot", "cat_treat", "fish")),
+    ("slot_spinner", "SLOT SPINNER", ("pizza", "donut", "ice_cream")),
+    ("blackjack", "BLACKJACK RUN", ("sushi", "watermelon", "strawberry")),
 )
 
 # Рецепт срабатывает только у соответствующего котика.
 SECRET_CAT_INDICES = {
     "roulette": 0,  # Крупье
-    "bongo": 1,     # Звонок
-    "buff": 2,      # Строитель
+    "phone": 1,     # Звонок
+    "builder": 2,   # Кирпич
     "volt": 3,      # Вольт
     "miner": 4,     # Кварц
+    "race_bettor": 5,  # Фаворит
+    "slot_spinner": 6,  # Семёрка
+    "blackjack": 7,  # Туз
 }
