@@ -23,6 +23,11 @@ from .ui import connection_panel, hotkey_bar, module_header, panel, step_list
 
 MOVE_KEYS = {"hit": VK_RETURN, "stand": VK_SPACE}
 MOVE_TITLES = {"hit": "Ещё", "stand": "Достаточно"}
+ROUND_TITLES = {
+    "win": "Победа засчитана",
+    "loss": "Раздача проиграна",
+    None: "Раздача закрыта без уведомления",
+}
 
 
 def parse_win_target(value: str, maximum: int = 999) -> int | None:
@@ -44,7 +49,6 @@ class BlackjackModule(ctk.CTkFrame):
     ROUND_TIMEOUT_SECONDS = 60.0
     BET_ACCEPT_TIMEOUT_SECONDS = 8.0
     MOVE_ACCEPT_TIMEOUT_SECONDS = 12.0
-    TOAST_CLEAR_TIMEOUT_SECONDS = 15.0
     FOCUS_SETTLE_SECONDS = 0.30
     RETRY_SECONDS = 1.0
     # Рука читается по кадрам, и один кадр может испортить рукой дилера или
@@ -73,6 +77,9 @@ class BlackjackModule(ctk.CTkFrame):
         self.last_reading: tuple[int, int] | None = None
         self.stable_count = 0
         self.first_bet = True
+        # Уведомление о прошлой раздаче висит на экране ещё секунд пять и
+        # захватывает начало следующей: помним, что оно уже посчитано.
+        self.stale_toast = False
         self.keys = {key: False for key in (VK_F9, VK_F11)}
 
         self.process = ctk.StringVar(value="GTA5.exe")
@@ -256,15 +263,14 @@ class BlackjackModule(ctk.CTkFrame):
         if self.wins >= self.target_wins:
             self.finish(f"Цель выполнена: {self.wins} побед за {self.rounds} раздач.")
             return
-        self.stage = "settle"
-        self.deadline = time.monotonic() + self.TOAST_CLEAR_TIMEOUT_SECONDS
-        self.next_action = None
-        if result == "win":
-            self.timer.set("Победа засчитана · жду, пока уведомление уйдёт")
-        elif result == "loss":
-            self.timer.set("Раздача проиграна · жду, пока уведомление уйдёт")
-        else:
-            self.timer.set("Раздача закрыта без уведомления · готовлю следующую ставку")
+        # Ждать, пока уведомление уйдёт, нельзя: стол открывает ставку сразу,
+        # а плашка висит ещё секунд пять и съедала почти всё окно ставки.
+        self.stale_toast = result is not None
+        delay = random.uniform(*self.NEXT_ROUND_DELAY_SECONDS)
+        self.stage = "await_bet"
+        self.deadline = time.monotonic() + self.ROUND_TIMEOUT_SECONDS
+        self.next_action = time.monotonic() + delay
+        self.timer.set(f"{ROUND_TITLES[result]} · следующая ставка через {delay:.1f} с")
 
     # ------------------------------------------------------------ lifecycle
 
@@ -287,6 +293,7 @@ class BlackjackModule(ctk.CTkFrame):
         self.last_reading = None
         self.stable_count = 0
         self.first_bet = True
+        self.stale_toast = False
         self.running = True
         self.stage = "await_bet"
         self.deadline = time.monotonic() + self.ROUND_TIMEOUT_SECONDS
@@ -384,21 +391,16 @@ class BlackjackModule(ctk.CTkFrame):
     def advance(self, frame: np.ndarray | None) -> None:
         phase = table_phase(frame)
         toast = classify_round_toast(frame)
+        if toast is None:
+            # Область очистилась: следующее уведомление будет уже про новую
+            # раздачу и его можно засчитывать.
+            self.stale_toast = False
+        elif self.stage in {"await_bet", "bet_sent"}:
+            # Карты ещё не сданы, значит плашка осталась от прошлой раздачи.
+            self.stale_toast = True
         if self.stage == "await_bet":
-            if toast is not None:
-                # Старое уведомление ещё висит: подождём, иначе засчитаем
-                # его как результат новой раздачи.
-                return
             if phase == "bet":
                 self.place_bet()
-            return
-        if self.stage == "settle":
-            if toast is None:
-                delay = random.uniform(*self.NEXT_ROUND_DELAY_SECONDS)
-                self.stage = "await_bet"
-                self.deadline = time.monotonic() + self.ROUND_TIMEOUT_SECONDS
-                self.next_action = time.monotonic() + delay
-                self.timer.set(f"Следующая ставка через {delay:.1f} с")
             return
         if self.stage == "bet_sent":
             if phase is not None and phase != "bet":
@@ -416,7 +418,7 @@ class BlackjackModule(ctk.CTkFrame):
                 )
             return
         if self.stage == "play":
-            if toast is not None:
+            if toast is not None and not self.stale_toast:
                 self.complete_round(toast)
                 return
             if phase == "bet":
@@ -450,7 +452,6 @@ class BlackjackModule(ctk.CTkFrame):
             "bet_sent": "Ставка не принята столом. Остановлено без лишних нажатий.",
             "play": "Результат раздачи не найден. Остановлено без лишних нажатий.",
             "move_sent": "Стол не принял ход. Остановлено без лишних нажатий.",
-            "settle": "Уведомление не исчезло. Остановлено без лишних нажатий.",
         }
         return messages.get(self.stage, "Остановлено по тайм-ауту.")
 

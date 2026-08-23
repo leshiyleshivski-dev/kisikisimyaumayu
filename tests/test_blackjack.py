@@ -17,6 +17,8 @@ from kisiki.modules.blackjack_vision import (
 )
 
 FELT = 96
+# Настоящее сукно стола: тот же зелёный тон, что и полоска победы.
+FELT_BGR = (69, 113, 88)
 PANEL = (26, 29, 34)
 LABEL_INK = (235, 235, 235)
 DIGIT_HEIGHT = 19
@@ -24,6 +26,10 @@ DIGIT_HEIGHT = 19
 
 def blank_frame() -> np.ndarray:
     return np.full((1440, 2560, 3), FELT, dtype=np.uint8)
+
+
+def green_felt_frame() -> np.ndarray:
+    return np.full((1440, 2560, 3), FELT_BGR, dtype=np.uint8)
 
 
 def paint_ratio(
@@ -116,6 +122,24 @@ class BlackjackToastTests(unittest.TestCase):
 
     def test_plain_table_has_no_result(self) -> None:
         self.assertIsNone(classify_round_toast(synthetic_table("wait")))
+
+    def test_win_is_read_even_when_the_felt_touches_the_stripe(self) -> None:
+        # Зелёная полоска победы вплотную примыкает к зелёному сукну справа.
+        # Пока полоску искали отдельным пятном, они слипались в одно широкое,
+        # и каждая победа уходила в «раздачи без выигрыша».
+        frame = green_felt_frame()
+        paint_toast(frame, "win")
+
+        self.assertEqual(classify_round_toast(frame), "win")
+
+    def test_felt_around_a_red_stripe_stays_a_loss(self) -> None:
+        frame = green_felt_frame()
+        paint_toast(frame, "loss")
+
+        self.assertEqual(classify_round_toast(frame), "loss")
+
+    def test_bare_felt_without_a_plate_has_no_result(self) -> None:
+        self.assertIsNone(classify_round_toast(green_felt_frame()))
 
     def test_green_felt_alone_is_not_a_win(self) -> None:
         # Стол блэкджека зелёный, а фишки красные. Без тёмной плашки слева
@@ -283,6 +307,12 @@ class BlackjackInputTests(unittest.TestCase):
     def test_round_has_a_long_safety_window(self) -> None:
         self.assertGreaterEqual(BlackjackModule.ROUND_TIMEOUT_SECONDS, 30.0)
         self.assertGreaterEqual(BlackjackModule.MOVE_ACCEPT_TIMEOUT_SECONDS, 8.0)
+
+    def test_next_bet_fits_into_the_open_bet_window(self) -> None:
+        # Стол открывает ставку сразу после раздачи, а плашка результата
+        # висит ещё около пяти секунд. Пауза должна быть заметно короче
+        # окна ставки, иначе цикл упирается в тайм-аут «экран ставки».
+        self.assertLessEqual(max(BlackjackModule.NEXT_ROUND_DELAY_SECONDS), 3.0)
 
 
 class BlackjackCatalogTests(unittest.TestCase):

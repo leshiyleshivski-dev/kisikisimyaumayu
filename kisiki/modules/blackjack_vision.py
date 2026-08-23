@@ -29,6 +29,14 @@ PROMPT_BOTTOM_ROW_RATIO = (0.8574, 0.9132, 0.1328, 0.0326)
 TOAST_BAND_RATIO = (0.360, 0.9236, 0.330, 0.0500)
 TOAST_ACCENT_X_RATIO = (0.560, 0.680)
 TOAST_PLATE_WIDTH_RATIO = 0.130
+# Плашка тёмная почти во всю высоту полосы, но текст разрывает её на
+# несколько отрезков, поэтому от каждого требуем лишь часть ширины.
+TOAST_PLATE_DARK_RATIO = 0.80
+TOAST_PLATE_MIN_WIDTH_RATIO = 0.050
+# Полоска результата шириной шесть пикселей на 1440p. Пробуем только её
+# левый край: дальше вплотную начинается сукно того же зелёного тона.
+TOAST_ACCENT_PROBE_RATIO = 0.0016
+TOAST_ACCENT_HEIGHT_RATIO = 0.55
 
 GLYPH_WIDTH, GLYPH_HEIGHT = 16, 24
 # Высота цифры и скобки в подписи: 19 и 24 пикселя на 1440p.
@@ -173,12 +181,25 @@ def table_phase(frame: np.ndarray | None) -> str | None:
     return None
 
 
+def _dark_runs(columns: np.ndarray) -> list[tuple[int, int]]:
+    """Отрезки подряд идущих отмеченных колонок как пары «первая, последняя»."""
+    padded = np.concatenate(([False], columns, [False]))
+    starts = np.flatnonzero(~padded[:-1] & padded[1:])
+    stops = np.flatnonzero(padded[:-1] & ~padded[1:])
+    return [(int(first), int(stop) - 1) for first, stop in zip(starts, stops)]
+
+
 def classify_round_toast(frame: np.ndarray | None) -> str | None:
     """Найти уведомление о результате раздачи и вернуть ``win`` или ``loss``.
 
     Одного цветного пятна мало: зелёное сукно стола и красные фишки дают
-    такие же оттенки. Поэтому засчитываем только узкую вертикальную полоску,
-    слева от которой лежит тёмная плашка уведомления с текстом.
+    такие же оттенки. Опорой служит тёмная плашка уведомления — цвет читаем
+    только у её правого края, где игра рисует полоску результата.
+
+    Искать полоску отдельным пятном нельзя: зелёная полоска победы вплотную
+    примыкает к такому же зелёному сукну и слипается с ним в одно широкое
+    пятно. Красная так не слипается, поэтому проигрыши считались, а победы
+    молча уходили в «раздачи без выигрыша».
     """
     if frame is None or frame.size == 0 or frame.ndim != 3:
         return None
@@ -186,9 +207,8 @@ def classify_round_toast(frame: np.ndarray | None) -> str | None:
     if band.size == 0:
         return None
     frame_width = frame.shape[1]
-    band_height, band_width = band.shape[:2]
-    hsv = cv2.cvtColor(band[:, :, :3], cv2.COLOR_BGR2HSV)
     gray = cv2.cvtColor(band[:, :, :3], cv2.COLOR_BGR2GRAY)
+    hsv = cv2.cvtColor(band[:, :, :3], cv2.COLOR_BGR2HSV)
     masks = {
         "win": cv2.inRange(
             hsv, np.array((35, 90, 90), dtype=np.uint8),
@@ -206,28 +226,26 @@ def classify_round_toast(frame: np.ndarray | None) -> str | None:
         ),
     }
     plate_width = max(40, round(frame_width * TOAST_PLATE_WIDTH_RATIO))
+    minimum_plate = max(40, round(frame_width * TOAST_PLATE_MIN_WIDTH_RATIO))
+    probe = max(2, round(frame_width * TOAST_ACCENT_PROBE_RATIO))
     band_left = round(frame_width * TOAST_BAND_RATIO[0])
     lower = round(frame_width * TOAST_ACCENT_X_RATIO[0]) - band_left
     upper = round(frame_width * TOAST_ACCENT_X_RATIO[1]) - band_left
-    maximum_accent_width = max(4, round(frame_width * 0.008))
-    best_area, best_result = 0, None
-    for result, mask in masks.items():
-        count, _labels, stats, _centroids = cv2.connectedComponentsWithStats(mask)
-        for index in range(1, count):
-            x, y, width, height, area = (int(value) for value in stats[index])
-            if not 2 <= width <= maximum_accent_width or height < band_height * 0.55:
-                continue
-            if not lower <= x <= upper or x < plate_width:
-                continue
-            plate = gray[y:y + height, x - plate_width:x]
-            if plate.size == 0 or float(np.mean(plate < 80)) < 0.88:
-                continue
-            text = float(np.mean(plate > 150))
-            if not 0.005 <= text <= 0.30:
-                continue
-            if area > best_area:
-                best_area, best_result = area, result
-    return best_result
+    dark = np.mean(gray < 80, axis=0) >= TOAST_PLATE_DARK_RATIO
+    for first, last in _dark_runs(dark):
+        if last - first + 1 < minimum_plate:
+            continue
+        accent = last + 1
+        if not lower <= accent <= upper or accent < plate_width:
+            continue
+        text = float(np.mean(gray[:, accent - plate_width:accent] > 150))
+        if not 0.005 <= text <= 0.30:
+            continue
+        for result, mask in masks.items():
+            stripe = mask[:, accent:accent + probe]
+            if stripe.size and float(np.mean(stripe > 0)) >= TOAST_ACCENT_HEIGHT_RATIO:
+                return result
+    return None
 
 
 class HandReader:
