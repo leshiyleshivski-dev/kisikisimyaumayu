@@ -33,7 +33,7 @@ a.binaries = [entry for entry in a.binaries if "opencv_videoio_ffmpeg" not in en
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 exe = EXE(
     pyz, a.scripts, a.binaries, a.zipfiles, a.datas, [],
-    name="Кисикисимяумяу",
+    name="Kisikisimyaumyau",
     debug=False, bootloader_ignore_signals=False, strip=False, upx=True,
     console=False,
     icon=str(here / "orange_cat.ico"),
