@@ -30,7 +30,7 @@ from .clicker import (
 )
 from .modules import (
     BlackjackModule, BuilderModule, ElectricianModule, MinerModule, PhoneModule,
-    RaceBettorModule, RouletteModule, SlotSpinnerModule,
+    PokerModule, RaceBettorModule, RouletteModule, SlotSpinnerModule,
 )
 
 
@@ -118,6 +118,9 @@ class KisikiApp(ctk.CTk):
         )
         self.secret_modules.register(
             "blackjack", lambda: BlackjackModule(self.content, self.show_clicker)
+        )
+        self.secret_modules.register(
+            "poker", lambda: PokerModule(self.content, self.show_clicker)
         )
         # CTk иногда возвращает свою стандартную иконку позднее при старте.
         # Поэтому устанавливаем cat-иконку после полной инициализации окна.
@@ -1635,6 +1638,7 @@ class KisikiApp(ctk.CTk):
             "race_bettor": "Остановлено: открыт модуль ставок на скачки.",
             "slot_spinner": "Остановлено: открыт модуль слотов.",
             "blackjack": "Остановлено: открыт модуль блэкджека.",
+            "poker": "Остановлено: открыт модуль покера.",
         }
         self.cancel_hold()
         self.secret_modules.deactivate_others(secret_id, stop_messages[secret_id])

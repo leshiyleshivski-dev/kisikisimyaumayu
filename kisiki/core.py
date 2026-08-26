@@ -33,12 +33,12 @@ CATS = (
     ("Фаворит", "угадывает победителя по усам", "assets/cats/07_race_bettor_cat.png", "#F2C66D", "Лудоманы"),
     ("Семёрка", "слушает звон барабанов", "assets/cats/08_slot_cat.png", "#D4A7FF", "Лудоманы"),
     ("Туз", "знает, когда хватит карт", "assets/cats/10_blackjack_cat.png", "#68D6B4", "Лудоманы"),
+    ("Блеф", "считает шансы и не моргает", "assets/cats/11_poker_cat.png", "#75A7FF", "Лудоманы"),
 )
 
 COMING_SOON_CATS = (
     ("Поплавок", "ждёт большого клёва", "#63C7BC", "Рыбак"),
     ("Фишка", "копит фишки на удачу", "#FF8F91", "Лудоманы"),
-    ("Занос", "мечтает о большом выигрыше", "#75A7FF", "Лудоманы"),
 )
 
 CAT_CATEGORIES = (
@@ -102,10 +102,20 @@ def rounded_photo(path: Path, max_width: int, max_height: int) -> tk.PhotoImage:
     return image.subsample(factor, factor)
 
 
-def progress_path() -> Path:
+def data_path(name: str) -> Path:
+    """Файл в папке приложения: прогресс кликера, журнал раздач и что дальше.
+
+    Складывать всё в один файл нельзя: прогресс читается на каждом запуске, а
+    покерный журнал за вечер набирает сотни записей — им незачем мешать друг
+    другу.
+    """
     data_root = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "KisikiSimyaumyau"
     data_root.mkdir(parents=True, exist_ok=True)
-    return data_root / "progress.json"
+    return data_root / name
+
+
+def progress_path() -> Path:
+    return data_path("progress.json")
 
 
 # ---------------------------------------------------------------------------

@@ -42,6 +42,7 @@ SECRET_RECIPES = (
     ("race_bettor", "RACE BETTOR", ("carrot", "cat_treat", "fish")),
     ("slot_spinner", "SLOT SPINNER", ("pizza", "donut", "ice_cream")),
     ("blackjack", "BLACKJACK RUN", ("sushi", "watermelon", "strawberry")),
+    ("poker", "POKER ADVISOR", ("tuna_can", "donut", "mystery_meal")),
 )
 
 # Рецепт срабатывает только у соответствующего котика.
@@ -54,4 +55,5 @@ SECRET_CAT_INDICES = {
     "race_bettor": 5,  # Фаворит
     "slot_spinner": 6,  # Семёрка
     "blackjack": 7,  # Туз
+    "poker": 8,  # Блеф
 }
