@@ -4,20 +4,29 @@ from __future__ import annotations
 
 import unittest
 
-from kisiki.modules.poker_journal import Journal, new_hand
-from kisiki.modules.poker_stats import (
+from kisiki.modules.poker.journal import Journal, new_hand
+from kisiki.modules.poker.stats import (
     ENOUGH_ANSWERS, Aggression, answer_lines, answers_line, hand_aggression,
-    keep_by_size, keep_share, pot_error, step_of, table_aggression, walk,
+    keep_by_size, keep_share, measured, model_keep, pot_error, step_of,
+    table_aggression, walk,
 )
 
 BIG_BLIND = 500
 
 
 def played(events, **changes) -> object:
-    """Раздача с одними лишь ходами: замеру больше ничего и не нужно."""
+    """Раздача с одними лишь ходами: замеру больше ничего и не нужно.
+
+    Ход записывается четвёркой — время, действие, сумма и номер игрока, — но
+    замеру по столу игрок безразличен: он складывает всех разом. Поэтому в
+    таблицах ниже пишется тройка, а номер дописывается здесь.
+    """
     fields = {"hole": ("Ah", "Kd"), "big_blind": BIG_BLIND, "pot": 5750}
     fields.update(changes)
-    return new_hand(events=tuple(events), **fields)
+    return new_hand(
+        events=tuple(move if len(move) > 3 else (*move, None) for move in events),
+        **fields,
+    )
 
 
 # Раздача целиком: блайнды, повышение до 1 500 с коллом и пасом, флоп со
@@ -96,6 +105,17 @@ class WalkTests(unittest.TestCase):
         # Без размера блайнда банк не с чего начинать, и доли выйдут выдумкой.
         self.assertEqual(hand_aggression(played(WHOLE_HAND, big_blind=None)), ())
 
+    def test_a_hand_without_a_start_line_is_left_alone_too(self) -> None:
+        # Свёрнутая строка событий гаснет через пару секунд, и «Началась новая
+        # игра» теряется вместе с началом банка. Дальше банк складывается с
+        # нуля с середины раздачи, и доля выходит вчетверо крупнее настоящей:
+        # ставка в тысячу мерилась бы против 750, а не против 3 750.
+        headless = WHOLE_HAND[1:]
+
+        self.assertFalse(walk(played(headless)).clean)
+        self.assertEqual(hand_aggression(played(headless)), ())
+        self.assertTrue(walk(played(WHOLE_HAND)).clean)
+
 
 class SizeTests(unittest.TestCase):
     def test_the_steps_match_the_model(self) -> None:
@@ -132,6 +152,51 @@ class SizeTests(unittest.TestCase):
         self.assertAlmostEqual(keep_share(enough), 0.5)
 
 
+class ModelComparisonTests(unittest.TestCase):
+    """Измеренное рядом с тем, что ждала модель.
+
+    Одно число само по себе не говорит, надо ли что-то менять: 52 % не
+    пасовавших — это много или мало, зависит от того, сколько ждала модель.
+    """
+
+    def test_the_model_is_asked_about_the_same_bets(self) -> None:
+        # Минимальная защита на ставку в половину банка — две трети диапазона.
+        half = tuple(
+            Aggression(amount=100, share=0.5, called=1, folded=0)
+            for _ in range(ENOUGH_ANSWERS)
+        )
+
+        self.assertAlmostEqual(model_keep(half), 1 / 1.5)
+        self.assertAlmostEqual(keep_share(half), 1.0)
+
+    def test_a_thin_sample_gets_no_expectation_either(self) -> None:
+        # Считать разницу между моделью и столом по трём ответам — тот же
+        # обман, что и называть по ним долю.
+        thin = (Aggression(amount=100, share=0.5, called=3, folded=0),)
+
+        self.assertIsNone(model_keep(thin))
+
+    def test_the_merged_number_speaks_before_the_steps_do(self) -> None:
+        # Ступеней три, и порознь они набираются годами: за два вечера в
+        # нижнюю попало два ответа. Сложенные вместе — говорят уже сейчас.
+        spread = [played((
+            (100, "начало", None), (100, "блайнд", None), (100, "блайнд", None),
+            (110, "ставка", 300),
+            *((111 + step, "колл", None) for step in range(12)),
+            (130, "чек", None), (131, "ставка", 5000),
+            *((132 + step, "фолд", None) for step in range(12)),
+        ))]
+        counted = keep_by_size(table_aggression(spread, preflop=False))
+        line = answers_line(Journal(hands=spread))
+
+        self.assertTrue(
+            all(faced < ENOUGH_ANSWERS for _kept, faced in counted.values()),
+            "ни одна ступень порознь ещё не набралась",
+        )
+        self.assertIn("не пасует", line)
+        self.assertIn("модель ждёт", line)
+
+
 class JournalMeasureTests(unittest.TestCase):
     def test_bets_are_collected_across_hands(self) -> None:
         hands = [played(WHOLE_HAND), played(WHOLE_HAND)]
@@ -149,6 +214,24 @@ class JournalMeasureTests(unittest.TestCase):
 
         self.assertAlmostEqual(pot_error([played(won)]), 0)
         self.assertAlmostEqual(pot_error([played(half)]), 0.5)
+
+    def test_a_hand_without_a_start_line_is_not_checked(self) -> None:
+        # Сверять с выигрышем банк, посчитанный с середины раздачи, незачем:
+        # разойдётся он всегда, и медиана по журналу поедет за ним. На журнале
+        # за 25–26 августа такие раздачи давали 93 % расхождения при 6 % у
+        # чистых, а вместе выходило 80 % — число, по которому нельзя ни
+        # доверять замеру, ни отказать ему.
+        won = WHOLE_HAND + ((120, "выигрыш", 5750),)
+
+        self.assertIsNone(pot_error([played(won[1:])]))
+        self.assertAlmostEqual(pot_error([played(won)]), 0)
+
+    def test_the_dropped_hands_are_counted_out_loud(self) -> None:
+        # Молча выкинуть раздачу мало: тонкий замер тогда выглядит как редкая
+        # игра за столом, а не как недочитанная строка событий.
+        hands = [played(WHOLE_HAND), played(WHOLE_HAND[1:]), played(())]
+
+        self.assertEqual(measured(hands), (1, 2))
 
     def test_a_hand_without_a_win_line_is_not_checked(self) -> None:
         # Строку выигрыша игра пишет последней, и в записи она есть не всегда:
@@ -172,9 +255,11 @@ class ScreenLineTests(unittest.TestCase):
     def test_a_thin_journal_says_how_thin(self) -> None:
         # Число, посчитанное по трём раздачам, на экране хуже честного «мало»:
         # по нему потом чинят модель.
-        journal = Journal(hands=[played(WHOLE_HAND)])
+        journal = Journal(hands=[played(WHOLE_HAND), played(WHOLE_HAND[1:])])
 
-        self.assertIn("мало", answers_line(journal))
+        line = answers_line(journal)
+        self.assertIn("мало", line)
+        self.assertIn("в замере 1 раздача из 2", line)
 
     def test_a_measured_step_is_named_with_its_share(self) -> None:
         journal = Journal(hands=[played((

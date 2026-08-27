@@ -13,7 +13,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from kisiki.modules.poker_vision import (
+from kisiki.modules.poker.vision import (
     BOARD_SLOTS, RING_ORDER, SEAT_SLOTS, all_in_only, bet_offer,
     bet_slider_at_minimum, bets_on_felt, blinds_from_bets, board_cards,
     call_amount, card_at, card_crop, dealer_seat, digit_templates, due_from_bets,

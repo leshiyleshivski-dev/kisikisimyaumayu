@@ -11,13 +11,12 @@ from kisiki.core import (
     VK_A, VK_D, VK_S, VK_W,
 )
 from kisiki.modules import (
-    BuilderModule, ElectricianModule, MinerModule, PhoneModule, RouletteModule,
+    BuilderModule, ElectricianModule, PhoneModule, RouletteModule,
 )
 
 __all__ = [
     "KisikiApp", "RouletteModule", "PhoneModule", "BuilderModule",
     "ElectricianModule", "PORT_UP", "PORT_RIGHT", "PORT_DOWN", "PORT_LEFT",
-    "MinerModule",
     "VK_W", "VK_A", "VK_S", "VK_D",
 ]
 

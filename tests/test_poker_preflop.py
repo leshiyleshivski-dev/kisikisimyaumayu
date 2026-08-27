@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import unittest
 
-from kisiki.modules.poker_preflop import (
+from kisiki.modules.poker.preflop import (
     CALL_RANGES, HEADS_UP_CALL, HEADS_UP_OPEN, OPEN_RANGES, PUSH_FOLD_BB,
-    PUSH_RANGES, THREE_BET_RANGES, blinds_word, preflop_advice, push_range,
-    raise_reply, shove_ev,
+    PUSH_RANGES, THREE_BET_RANGES, blinds_word, hand_word, in_hundred,
+    preflop_advice, push_range, raise_reply, shove_ev,
 )
-from kisiki.modules.poker_ranges import range_share
+from kisiki.modules.poker.ranges import range_share
 
 BIG_BLIND = 500
 DEEP = BIG_BLIND * 100
@@ -136,6 +136,43 @@ class ChartAdviceTests(unittest.TestCase):
 
     def test_the_hand_class_is_reported_back(self) -> None:
         self.assertEqual(deep(["Ah", "Kd"]).hand, "AKo")
+
+
+class FoldReasonTests(unittest.TestCase):
+    """Фолд обязан говорить, когда же играть.
+
+    Подряд идущие фолды читаются как поломка помощника, хотя двадцать рук из
+    ста — обычная плотность игры. Вопрос «а играть-то когда» задаётся ровно в
+    ту секунду, когда на экране стоит «ФОЛД», — там же он и отвечается.
+    """
+
+    def test_an_unopened_fold_names_how_wide_the_seat_opens(self) -> None:
+        reason = deep(
+            ["8d", "4s"], position="CO", my_bet=0, to_call=BIG_BLIND,
+            pot=BIG_BLIND * 3,
+        ).reason
+
+        self.assertIn("не открывают", reason)
+        self.assertIn(in_hundred(OPEN_RANGES["CO"]), reason)
+
+    def test_a_fold_against_a_raise_names_the_answering_share(self) -> None:
+        # Против повышения играется свой, куда более узкий набор — и назвать
+        # надо именно его, иначе число обещает вчетверо больше игры, чем есть.
+        reason = deep(
+            ["8d", "4s"], position="CO", my_bet=0, to_call=BIG_BLIND * 3,
+            pot=BIG_BLIND * 5,
+        ).reason
+
+        self.assertIn("против повышения", reason)
+        self.assertIn(
+            in_hundred(THREE_BET_RANGES["CO"] | CALL_RANGES["CO"]), reason
+        )
+
+    def test_a_free_look_is_never_a_fold(self) -> None:
+        # Доплаты нет — сбрасывать нечего и незачем: флоп смотрится даром.
+        tip = deep(["8d", "4s"], position="BB", my_bet=BIG_BLIND, to_call=0)
+
+        self.assertEqual(tip.action, "чек")
 
 
 class HeadsUpTests(unittest.TestCase):
@@ -360,6 +397,20 @@ class WordingTests(unittest.TestCase):
         self.assertEqual(blinds_word(14), "блайндов")
         self.assertEqual(blinds_word(21), "блайнд")
         self.assertEqual(blinds_word(22), "блайнда")
+
+    def test_hands_agree_with_the_number(self) -> None:
+        # Винительный падеж: «отсюда открывают 21 руку из ста».
+        self.assertEqual(hand_word(1), "руку")
+        self.assertEqual(hand_word(3), "руки")
+        self.assertEqual(hand_word(12), "рук")
+        self.assertEqual(hand_word(14), "рук")
+        self.assertEqual(hand_word(21), "руку")
+        self.assertEqual(hand_word(22), "руки")
+
+    def test_the_share_is_counted_by_combinations(self) -> None:
+        # `A♠K♦` и `A♠K♠` — это двенадцать раздач и четыре, а не «две руки».
+        self.assertEqual(in_hundred(OPEN_RANGES["BTN"]), "39 рук из ста")
+        self.assertEqual(in_hundred(OPEN_RANGES["UTG"]), "11 рук из ста")
 
     def test_the_short_stack_reason_reads_cleanly(self) -> None:
         self.assertIn("4 блайнда", short(["7c", "2d"], stack=BIG_BLIND * 4).reason)

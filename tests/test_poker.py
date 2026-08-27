@@ -7,14 +7,18 @@ import unittest
 from dataclasses import replace
 
 import cv2
+import numpy as np
 
 from food_catalog import FOOD_NAMES, SECRET_CAT_INDICES, SECRET_RECIPES
 from kisiki.core import CATS, COMING_SOON_CATS, resource_path
-from kisiki.modules import poker
-from kisiki.modules.poker import STEPS, HandMemory, PokerModule, cards_text
-from kisiki.modules.poker_journal import Journal, new_hand
-from kisiki.modules.poker_math import Advice
-from kisiki.modules.poker_vision import LogEvent, TableState
+from kisiki.modules.poker import module as poker
+from kisiki.modules.poker.hand_math import Advice
+from kisiki.modules.poker.journal import Journal, new_hand
+from kisiki.modules.poker.module import STEPS, HandMemory, PokerModule, cards_text
+from kisiki.modules.poker.players import Roster
+from kisiki.modules.poker.vision import (
+    NAME_HEIGHT, NAME_WIDTH, LogEvent, TableState,
+)
 
 GLYPH_WIDTH, GLYPH_HEIGHT = 24, 32
 
@@ -120,6 +124,19 @@ class PokerModuleTests(unittest.TestCase):
         # структурой: окно CustomTkinter в тестах не поднимается.
         for method in (PokerModule.show_advice, PokerModule.show_silence):
             self.assertIn("self.plan_text.set", inspect.getsource(method), method.__name__)
+
+    def test_every_advice_shown_is_also_written_down(self) -> None:
+        # Журнал без совета отвечает только на «сколько проиграли», а
+        # спрашивают его о другом: совет был плохой или совет не послушали.
+        # Проверяем структурой — окно CustomTkinter в тестах не поднимается, а
+        # пропустить одну из двух считалок легко: их ровно две, до флопа и
+        # после, и записываться обязаны обе.
+        source = inspect.getsource(PokerModule.update_advice)
+
+        self.assertEqual(
+            source.count("self.memory.remember_advice("),
+            source.count("self.show_advice("),
+        )
 
     def test_size_line_answers_how_much_to_put_in(self) -> None:
         # «Рейз» без числа и есть тот вопрос, ради которого экран заводился:
@@ -671,6 +688,66 @@ class JournalCollectionTests(unittest.TestCase):
         self.assertTrue(hand.won)
         self.assertTrue(hand.showdown)
 
+    def test_the_win_mark_is_caught_after_the_hand_closed(self) -> None:
+        # Раздача закрывается через три пустых кадра — за три четверти
+        # секунды, — а метку игра зажигает вместе с уезжающим банком, и банк
+        # едет дольше. Раз уж раздача всё равно ждёт устоявшегося стека, пусть
+        # дождётся и метки: иначе выигранная раздача уходит в журнал
+        # проигранной.
+        self.idle(1000)
+        self.play(stack=1000, pot=8000)
+        for stack in (2_137, 3_982, 4_610):
+            self.memory.update(table(players=0, stack=stack))
+
+        self.assertEqual(len(self.journal), 0, "стек ещё не досчитал")
+
+        for _ in range(2):
+            self.memory.update(table(players=0, stack=5000, winners=(5,)))
+
+        self.assertEqual(len(self.journal), 1)
+        self.assertTrue(self.journal.hands[0].won)
+        self.assertEqual(self.journal.hands[0].result, 4000)
+
+    def test_the_win_mark_does_not_carry_over_to_the_next_hand(self) -> None:
+        # Гаснет метка в начале следующей раздачи. Оставленная гореть, она
+        # записывала бы выигранной каждую раздачу после выигранной.
+        self.idle(1000)
+        self.play(showdown=True, winners=(5,), stack=800)
+        self.idle(1400)
+        self.play()
+        self.play(board=("2c", "7d", "Qs"), stack=700)
+        self.idle(1400)
+
+        self.assertEqual(len(self.journal), 2)
+        self.assertTrue(self.journal.hands[0].won)
+        self.assertFalse(self.journal.hands[1].won)
+
+    def test_the_advice_lands_in_the_journal_with_its_street(self) -> None:
+        # Улица тут важнее самого совета: до флопа «фолд» стоит раздачи
+        # целиком, а тот же «фолд» на флопе — одной ставки.
+        self.idle(1000)
+        self.play()
+        self.memory.remember_advice("фолд")
+        self.memory.remember_advice("фолд")
+        self.play(board=("2c", "7d", "Qs"), stack=800)
+        self.memory.remember_advice("чек")
+        self.idle(1400)
+
+        hand = self.journal.hands[0]
+        self.assertEqual(hand.advice, ((0, "фолд"), (3, "чек")))
+        self.assertEqual(hand.advised, "фолд")
+
+    def test_the_advice_does_not_leak_into_the_next_hand(self) -> None:
+        self.idle(1000)
+        self.play()
+        self.memory.remember_advice("фолд")
+        self.idle(1400)
+        self.play()
+        self.idle(1400)
+
+        self.assertEqual(self.journal.hands[0].advice, ((0, "фолд"),))
+        self.assertEqual(self.journal.hands[1].advice, ())
+
     def test_hands_shown_at_the_showdown_are_kept(self) -> None:
         # Чужие карты видны только здесь — и это первое, что понадобится
         # статистике по соперникам.
@@ -770,6 +847,22 @@ class JournalLineTests(unittest.TestCase):
         self.assertIn("выиграно 3", line)
         self.assertIn("до вскрытия дошло 3", line)
 
+    def test_discipline_takes_the_place_of_showdowns(self) -> None:
+        # Место под последнее число одно, и вскрытия уступают его счёту
+        # сброшенным рукам, которые всё равно доигрывались: разница между
+        # «совет плохой» и «совет не послушали» видна только по нему.
+        journal = self.filled(
+            2, result=-4000, position="CO", advice=((0, "фолд"),), showdown=True,
+        )
+        journal.add(new_hand(
+            hole=("2c", "7d"), big_blind=50, pot=500, result=-50, position="BB",
+            advice=((0, "фолд"),),
+        ))
+        line = PokerModule.journal_line(journal)
+
+        self.assertIn("пас не послушан 2 из 3", line)
+        self.assertNotIn("вскрытия", line)
+
     def test_the_rate_waits_for_enough_hands(self) -> None:
         # Одна выигранная раздача даёт «+800 BB/100» — число верное и
         # бессмысленное сразу.
@@ -791,9 +884,20 @@ class JournalLineTests(unittest.TestCase):
         self.assertIn("−200 BB/100", line)
 
 
-def moved(at: int, action: str, amount: int | None = None) -> LogEvent:
-    """Строка журнала событий: время, действие и сумма, если игра её написала."""
-    return LogEvent(action=action, amount=amount, at=at)
+def moved(
+    at: int, action: str, amount: int | None = None, name=None
+) -> LogEvent:
+    """Строка журнала событий: время, действие, сумма и отпечаток имени.
+
+    Имени нет у строк, которые пишет сама игра, — «Началась новая игра» и
+    «Игра закончена».
+    """
+    return LogEvent(action=action, amount=amount, at=at, name=name)
+
+
+def name_mask(seed: int) -> np.ndarray:
+    """Отпечаток имени той же формы, что снимает зрение со строки событий."""
+    return np.random.default_rng(seed).random((NAME_HEIGHT, NAME_WIDTH)) < 0.4
 
 
 class EventCollectionTests(unittest.TestCase):
@@ -814,6 +918,39 @@ class EventCollectionTests(unittest.TestCase):
         }
         fields.update(changes)
         self.memory.update(table(**fields))
+
+    def test_the_move_remembers_who_made_it(self) -> None:
+        # Ходы журнал пишет с первого запуска, а кто их сделал — не знал:
+        # отпечаток имени зрение снимало с каждой строки и тем же кадром
+        # выбрасывало. Без номера нет ни персональной статистики, ни данных
+        # под неё.
+        first, second = name_mask(1), name_mask(2)
+        self.frame(
+            moved(100, "начало"), moved(101, "блайнд", name=first),
+            moved(103, "рейз", 200, name=second), moved(104, "колл", name=first),
+        )
+
+        self.assertEqual(
+            [who for _at, _action, _amount, who in self.memory.hand_events()],
+            [None, 0, 1, 0],
+        )
+
+    def test_a_player_keeps_his_number_across_hands(self) -> None:
+        # Узнавание тем и ценно, что помнит соседа из раздачи номер сорок семь.
+        # Список отпечатков живёт дольше раздачи и потому приходит снаружи.
+        roster = Roster()
+        self.memory = HandMemory(on_hand=self.journal.add, roster=roster)
+        first = name_mask(1)
+        self.frame(moved(100, "начало"), moved(101, "колл", name=first))
+        earlier = [who for _at, _a, _m, who in self.memory.hand_events()]
+        for _ in range(3):
+            self.memory.update(table(players=0, stack=1000))
+        self.frame(moved(200, "начало"), moved(201, "рейз", 200, name=first))
+        later = [who for _at, _a, _m, who in self.memory.hand_events()]
+
+        self.assertEqual(earlier, [None, 0])
+        self.assertEqual(later, [None, 0], "тот же номер, что раздачу назад")
+        self.assertEqual(len(roster), 1, "тот же человек, а не новый")
 
     def test_the_same_window_is_written_once(self) -> None:
         window = (moved(100, "начало"), moved(101, "блайнд"), moved(103, "колл"))
@@ -852,7 +989,7 @@ class EventCollectionTests(unittest.TestCase):
                    moved(100, "начало"), moved(101, "блайнд"))
         self.frame(moved(103, "колл"))
 
-        self.assertEqual([action for _at, action, _amount in self.memory.hand_events()],
+        self.assertEqual([action for _at, action, _amount, _who in self.memory.hand_events()],
                          ["начало", "блайнд", "колл"])
 
     def test_moves_are_ordered_by_the_clock(self) -> None:
@@ -861,7 +998,7 @@ class EventCollectionTests(unittest.TestCase):
         self.frame(moved(100, "начало"), moved(103, "колл"))
         self.frame(moved(90, "конец"), moved(105, "чек"))
 
-        self.assertEqual([action for _at, action, _amount in self.memory.hand_events()],
+        self.assertEqual([action for _at, action, _amount, _who in self.memory.hand_events()],
                          ["начало", "колл", "чек"])
 
     def test_a_hand_without_its_start_line_keeps_its_own_moves(self) -> None:
@@ -880,11 +1017,11 @@ class EventCollectionTests(unittest.TestCase):
 
         self.assertEqual(len(self.journal), 2)
         self.assertEqual(
-            [action for _at, action, _amount in self.journal.hands[0].events],
+            [action for _at, action, _amount, _who in self.journal.hands[0].events],
             ["начало", "блайнд", "ставка"],
         )
         self.assertEqual(
-            [action for _at, action, _amount in self.journal.hands[1].events],
+            [action for _at, action, _amount, _who in self.journal.hands[1].events],
             ["колл"],
             "ходы прошлой раздачи достаются ей, а не этой",
         )
@@ -901,7 +1038,7 @@ class EventCollectionTests(unittest.TestCase):
         self.frame(moved(120, "чек"), hole=("2c", "7d"))
 
         self.assertEqual(
-            [action for _at, action, _amount in self.memory.hand_events()], ["чек"]
+            [action for _at, action, _amount, _who in self.memory.hand_events()], ["чек"]
         )
         self.assertEqual(len(self.memory.events), 3, "память о ходах не стёрлась")
 
@@ -931,5 +1068,5 @@ class EventCollectionTests(unittest.TestCase):
         # Развёрнутая строка даёт и ходы, и замер по столу — обе половины
         # стоят в одной строке панели: на вторую там нет места.
         open_line = PokerModule.log_line(self.journal, True)
-        self.assertIn("ходов записано 0", open_line)
+        self.assertIn("ходов 0 от 0 игроков", open_line)
         self.assertIn("мало", open_line)

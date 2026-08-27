@@ -6,7 +6,7 @@
 проверяется тестом. Покер — игра с неполной информацией и живыми соперниками,
 автопилот тут не к месту: решение принимает человек.
 
-Разбор кадра живёт в ``poker_vision.py``, математика — в ``poker_math.py``.
+Разбор кадра живёт в ``vision.py``, математика — в ``hand_math.py``.
 Здесь остаётся то, чего не видно на одном кадре: своё место, свои карты и
 границы раздачи. Разбор задачи — в ``poker-plan/README.md``.
 """
@@ -21,19 +21,20 @@ import customtkinter as ctk
 import mss
 import numpy as np
 
-from ..core import (
+from ...core import (
     APP_BG, MINT, MUTED, TEXT, VK_F9, VK_F11,
     client_bounds, data_path, find_game_window, user32, window_title,
 )
-from .poker_journal import (
+from .journal import (
     RATE_FROM, RECENT_HANDS, Hand, Journal, hand_result, hands_word, new_hand,
 )
-from .poker_math import spaced
-from .poker_postflop import postflop_advice
-from .poker_preflop import preflop_advice
-from .poker_stats import answers_line
-from .poker_vision import SEAT_NAMES, seat_positions, seats_in_order, table_state
-from .ui import connection_panel, hotkey_bar, module_header, panel, step_list
+from .hand_math import spaced
+from .postflop import postflop_advice
+from .players import Roster, players_word
+from .preflop import preflop_advice
+from .stats import answers_line
+from .vision import SEAT_NAMES, seat_positions, seats_in_order, table_state
+from ..ui import connection_panel, hotkey_bar, module_header, panel, step_list
 
 ACCENT = "#75A7FF"
 
@@ -103,7 +104,11 @@ class HandMemory:
     # переход улицы. Одного пустого кадра для «раздача кончилась» мало.
     EMPTY_FRAMES_TO_FORGET = 3
 
-    def __init__(self, on_hand: Callable[[Hand], None] | None = None) -> None:
+    def __init__(
+        self,
+        on_hand: Callable[[Hand], None] | None = None,
+        roster: Roster | None = None,
+    ) -> None:
         # Куда отдавать сыгранную раздачу. Память знает её границы, а что с
         # ней делать дальше — уже не её дело.
         self.on_hand = on_hand
@@ -159,6 +164,12 @@ class HandMemory:
         # снова, пока журнал не прокрутится.
         self.events: list = []
         self.seen_events: Counter = Counter()
+        # Список отпечатков имён. Живёт он дольше сеанса и потому приходит
+        # снаружи: узнавание тем и ценно, что помнит вчерашних соседей.
+        self.roster = roster if roster is not None else Roster()
+        # Что помощник советовал в этой раздаче. Копится здесь, а не на
+        # экране: экран показывает один совет, а в журнал нужна вся раздача.
+        self.advice: list[tuple[int, str]] = []
         self.log_open = False
         # С какой отметки времени идут ходы этой раздачи и открыта ли она
         # вообще. Строку «Началась новая игра» игра пишет с опозданием, и
@@ -200,14 +211,23 @@ class HandMemory:
         hand, self.finished = self.finished, None
         if hand is None or self.on_hand is None:
             return
-        # Ходы пересобираем прямо сейчас: строку «выиграл N фишек» игра пишет
-        # последней, уже над пустым столом, и на кадре закрытия раздачи её
-        # ещё нет.
+        # Ходы и метку «WIN» пересобираем прямо сейчас: строку «выиграл N
+        # фишек» игра пишет последней, уже над пустым столом, а метку зажигает
+        # вместе с уезжающим банком. На кадре закрытия раздачи нет ни того, ни
+        # другого — раздача закрывается через три пустых кадра, то есть за
+        # три четверти секунды, а банк едет дольше. Раз уж раздача всё равно
+        # ждёт устоявшегося стека, пусть дождётся и метки: вечером 26 августа
+        # две выигранные раздачи из четырёх записаны проигранными.
         self.on_hand(replace(
             hand,
+            won=hand.won or self.win_mark_seen(),
             result=hand_result(self.stack_before, self.pause_stack, hand.pot),
             events=self.hand_events(),
         ))
+
+    def win_mark_seen(self) -> bool:
+        """Горела ли метка «WIN» у нашего места — хоть на одном кадре."""
+        return self.seat is not None and self.seat in self.winners
 
     def record(self) -> Hand:
         """Раздача так, как её видел экран; результат допишется в паузе."""
@@ -224,6 +244,7 @@ class HandMemory:
                 if cards and seat != self.seat
             ),
             events=self.hand_events(),
+            advice=tuple(self.advice),
         )
 
     def forget_hand(self) -> None:
@@ -244,9 +265,14 @@ class HandMemory:
         # Поэтому позиция берётся один раз за раздачу и дальше не пересчитывается.
         self.dealer = None
         self.position = None
-        self.winners = ()
         self.shown = ()
         self.showdown_seen = False
+        # Совет — свойство раздачи: с её концом кончается и он.
+        self.advice = []
+        # Метку «WIN» не выбрасываем по той же причине, по какой не выбрасываем
+        # ходы: зажигается она последней, уже над пустым столом. Забытая здесь,
+        # она пропадала бы ровно в тот кадр, когда её только зажгли. Гаснет она
+        # в начале следующей раздачи — там же, где начинается отсчёт ходов.
         # Ходы не выбрасываем: строки этой раздачи приходят и после того, как
         # карты со стола убрали, — «выиграл N фишек» пишется последней.
         # Границей раздач служит отметка времени, а не пустой список.
@@ -290,6 +316,10 @@ class HandMemory:
             # времени последней из них и есть граница.
             self.hand_open = True
             self.events_from = self.newest_event()
+            # Раздача началась — метка прошлой больше не наша. Гаснет она
+            # здесь, а не в конце раздачи: до этой строки она ещё могла
+            # достаться раздаче, которая ждёт записи.
+            self.winners = ()
         if self.pending_clean and not state.board:
             # Границу раздачи видели своими глазами — значит, эту раздачу
             # можно считать целиком. Пустой борд тут обязателен: раздача
@@ -400,7 +430,24 @@ class HandMemory:
                   if event.action == "начало"]
         if starts:
             events = events[starts[-1]:]
-        return tuple((event.at, event.action, event.amount) for event in events)
+        return tuple(
+            (event.at, event.action, event.amount, self.roster.number_of(event.name))
+            for event in events
+        )
+
+    def remember_advice(self, action: str) -> None:
+        """Запомнить совет, который сейчас на экране, — вместе с улицей.
+
+        Улица тут важнее самого совета: до флопа решает таблица, и её «фолд»
+        стоит раздачи целиком, а тот же «фолд» на ривере стоит одной ставки.
+        Пишется только смена — улицы или совета: экран показывает одно и то же
+        слово четыре раза в секунду, и без этого в журнал уходили бы сотни
+        одинаковых строк на раздачу.
+        """
+        step = (len(self.board), action)
+        if self.advice and self.advice[-1] == step:
+            return
+        self.advice.append(step)
 
     def remember_showdown(self, state) -> None:
         """Копить метку «WIN» и открытые на вскрытии руки.
@@ -564,7 +611,10 @@ class PokerModule(ctk.CTkFrame):
         # Журнал переживает выход из приложения: сравнивать периоды по
         # раздачам одного вечера бессмысленно.
         self.journal = Journal.load(data_path("poker_journal.json"))
-        self.memory = HandMemory(on_hand=self.remember_hand)
+        # Отпечатки имён живут своим файлом: журнал за вечер набирает сотни
+        # раздач, а имён за столом шесть, и переписывать их вместе незачем.
+        self.roster = Roster.load(data_path("poker_players.json"))
+        self.memory = HandMemory(on_hand=self.remember_hand, roster=self.roster)
         self.advice_key: tuple | None = None
         self.advice_pot: int | None = None
 
@@ -890,7 +940,11 @@ class PokerModule(ctk.CTkFrame):
         журнал, — то есть на самую нужную.
         """
         if open_log:
-            return f"ходов записано {journal.moves()} · {answers_line(journal)}"
+            players = journal.players()
+            return (
+                f"ходов {journal.moves()} от {players} "
+                f"{players_word(players)} · {answers_line(journal)}"
+            )
         return "строка событий свёрнута — разверни её стрелкой"
 
     @staticmethod
@@ -905,14 +959,22 @@ class PokerModule(ctk.CTkFrame):
 
     @classmethod
     def journal_line(cls, journal: Journal) -> str:
-        """Сколько раздач сыграно и чем они кончались."""
+        """Сколько раздач сыграно и чем они кончались.
+
+        Панели «ЖУРНАЛ» хватает ровно на три строки, поэтому место под
+        последнее число одно — и занимает его самое полезное из двух. Пока
+        советов в журнале нет, это вскрытия; как только появились — счёт
+        сброшенным рукам, которые всё равно доигрывались. Им и место: разница
+        между «совет плохой» и «совет не послушали» видна только по ним.
+        """
         played = len(journal)
         if not played:
             return "раздач пока нет — журнал наберётся сам, пока помощник смотрит"
-        return (
-            f"{played} {hands_word(played)} · выиграно {journal.wins()} · "
-            f"до вскрытия дошло {journal.showdowns()}"
-        )
+        line = f"{played} {hands_word(played)} · выиграно {journal.wins()}"
+        ignored, advised = journal.ignored_folds()
+        if advised:
+            return f"{line} · пас не послушан {ignored} из {advised}"
+        return f"{line} · до вскрытия дошло {journal.showdowns()}"
 
     @classmethod
     def money_line(cls, journal: Journal) -> str:
@@ -1001,6 +1063,7 @@ class PokerModule(ctk.CTkFrame):
                 big_blind=memory.big_blind, faced_bet=memory.faced_bet,
                 can_raise=not state.all_in_only, trials=self.ADVICE_TRIALS,
             )
+            self.memory.remember_advice(tip.action)
             self.show_advice(tip, self.payable() or 0, tip.made, "по диапазону")
             return
         # До флопа перебор против случайных карт советует играть всё подряд:
@@ -1013,6 +1076,7 @@ class PokerModule(ctk.CTkFrame):
             min_bet=memory.min_bet, limpers=self.limpers(state, memory),
             can_raise=not state.all_in_only, trials=self.PREFLOP_TRIALS,
         )
+        self.memory.remember_advice(tip.action)
         self.show_advice(tip, self.payable() or 0, tip.hand, tip.mode)
 
     def show_advice(self, tip, to_call: int, made: str, mode: str) -> None:

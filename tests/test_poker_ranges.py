@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import unittest
 
-from kisiki.modules.poker_ranges import (
+from kisiki.modules.poker.ranges import (
     KIND_COMBOS, STRENGTH_INDEX, STRENGTH_ORDER, TOTAL_COMBOS, class_combos,
     class_kind, combos_of, hand_class, parse_range, range_share, top_share,
 )

@@ -12,7 +12,7 @@
   показывает промежуточные числа, и в журнал попадали суммы вроде −43 879 и
   −232, которых за столом с фишкой в 250 просто не бывает.
 
-Сами ошибки закрыты в `poker_vision.py` и `poker.py`, новые раздачи пишутся
+Сами ошибки закрыты в `kisiki/modules/poker/`, новые раздачи пишутся
 уже чистыми. Этот скрипт чинит то, что записано до правок, и запускается
 руками один раз:
 
@@ -28,7 +28,7 @@ import shutil
 from dataclasses import replace
 
 from kisiki.core import data_path
-from kisiki.modules.poker_journal import Hand, Journal
+from kisiki.modules.poker.journal import Hand, Journal
 
 # Насколько близко к настоящей раздаче стоит её двойник. Рождался он из карт
 # вскрытия, которые лежат на столе ещё секунду-другую после того, как банк

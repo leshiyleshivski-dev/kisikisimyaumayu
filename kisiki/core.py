@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import ctypes
 import os
+import random
 import sys
 import time
 import tkinter as tk
@@ -328,6 +329,46 @@ def send_relative_move(dx: int, dy: int) -> bool:
         sent_x, sent_y = target_x, target_y
         if step < steps:
             time.sleep(0.008)
+    return True
+
+
+def glide_cursor_to(
+    target_x: int,
+    target_y: int,
+    *,
+    duration_range: tuple[float, float] = (0.38, 0.62),
+    bend_pixels: float = 14.0,
+) -> bool:
+    """Довести настоящий курсор до точки живой дугой, а не прыжком.
+
+    ``SetCursorPos`` ставит курсор в точку одним кадром: между двумя крупинками
+    руды он телепортируется, и со стороны это ровно то, чем является. Здесь
+    путь идёт по квадратичной кривой со случайным изгибом, а скорость по нему
+    размазана «сглаженным шагом» — без рывка на старте и стука в конце.
+
+    Длительность складывается из случайной базы и добавки за расстояние:
+    короткий переход между соседними вкраплениями не должен стоить столько же,
+    сколько проход через весь экран. Ею и настраивается характер под модуль —
+    ставки на скачки никуда не спешат, а стол сортировки живёт полторы секунды.
+    """
+    start_x, start_y = cursor_position()
+    dx, dy = target_x - start_x, target_y - start_y
+    distance = max(1.0, (dx * dx + dy * dy) ** 0.5)
+    duration = random.uniform(*duration_range) + min(0.18, distance / 9000)
+    steps = max(12, min(72, round(duration / 0.010)))
+    bend = random.uniform(-bend_pixels, bend_pixels)
+    control_x = (start_x + target_x) / 2 - dy / distance * bend
+    control_y = (start_y + target_y) / 2 + dx / distance * bend
+    for step in range(1, steps + 1):
+        raw = step / steps
+        eased = raw * raw * (3.0 - 2.0 * raw)
+        inverse = 1.0 - eased
+        x = inverse * inverse * start_x + 2 * inverse * eased * control_x + eased * eased * target_x
+        y = inverse * inverse * start_y + 2 * inverse * eased * control_y + eased * eased * target_y
+        if not user32.SetCursorPos(round(x), round(y)):
+            return False
+        if step < steps:
+            time.sleep(duration / steps)
     return True
 
 

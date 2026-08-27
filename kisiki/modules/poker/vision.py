@@ -1,10 +1,9 @@
 """Разбор кадра покерного стола в GTA.
 
 Модуль ничего не знает об окнах, вводе и статистике: он получает кадр и
-отвечает, что сейчас на столе. Такое разделение уже используется парами
-``miner.py`` / ``miner_vision.py`` и ``blackjack.py`` / ``blackjack_vision.py``
-и позволяет проверять распознавание на сохранённых кадрах без запуска
-CustomTkinter.
+отвечает, что сейчас на столе. Такое разделение уже используется парой
+``blackjack.py`` / ``blackjack_vision.py`` и позволяет проверять
+распознавание на сохранённых кадрах без запуска CustomTkinter.
 
 Все области заданы долями клиентской области. Замеры сняты на 2560x1440;
 геометрия и разбор кадров описаны в ``poker-plan/README.md``.
@@ -18,7 +17,7 @@ from typing import NamedTuple
 import cv2
 import numpy as np
 
-from ..core import resource_path
+from ...core import resource_path
 
 RANKS = "23456789TJQKA"
 SUITS = "cdhs"
@@ -323,7 +322,14 @@ def digit_templates() -> list[np.ndarray] | None:
     return _DIGIT_TEMPLATES
 
 
-def _similarity(first: np.ndarray, second: np.ndarray) -> float:
+def similarity(first: np.ndarray, second: np.ndarray) -> float:
+    """Совпадение площадей двух масок: общее к суммарному.
+
+    Мерка одна на весь модуль: ею узнаются знаки карт, цифры, слова строки
+    событий — и отпечатки имён в ``players.py``. Точное равенство не годится
+    нигде: картинка на экране то светлеет, то гаснет, и одинаковыми две маски
+    не бывают почти никогда.
+    """
     union = int(np.logical_or(first, second).sum())
     return int(np.logical_and(first, second).sum()) / union if union else 0.0
 
@@ -467,10 +473,10 @@ def read_card(card: np.ndarray) -> str | None:
         return None
     (rank_mask, _rank_red), (suit_mask, suit_red) = parts
     rank_score, rank_index = max(
-        (_similarity(rank_mask, template), index) for index, template in enumerate(ranks)
+        (similarity(rank_mask, template), index) for index, template in enumerate(ranks)
     )
     pool = (1, 2) if suit_red else (0, 3)  # d, h против c, s
-    suit_score, suit_index = max((_similarity(suit_mask, suits[index]), index) for index in pool)
+    suit_score, suit_index = max((similarity(suit_mask, suits[index]), index) for index in pool)
     if min(rank_score, suit_score) < CARD_MATCH_FLOOR:
         return None
     return RANKS[rank_index] + SUITS[suit_index]
@@ -633,7 +639,7 @@ def _digits_of(glyphs: list[_Glyph]) -> int | None:
             interpolation=cv2.INTER_AREA,
         ) > 127
         score, digit = max(
-            (_similarity(normalized, template), value)
+            (similarity(normalized, template), value)
             for value, template in enumerate(templates)
         )
         if score < DIGIT_MATCH_FLOOR:
@@ -1227,7 +1233,7 @@ def _log_action(word: np.ndarray) -> str:
     if templates is None or shape is None:
         return ""
     score, action = max(
-        (_similarity(shape, template), LOG_ACTIONS[index])
+        (similarity(shape, template), LOG_ACTIONS[index])
         for index, template in enumerate(templates)
     )
     return action if score >= LOG_MATCH_FLOOR else ""

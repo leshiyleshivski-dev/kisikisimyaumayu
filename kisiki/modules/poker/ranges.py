@@ -18,7 +18,7 @@
 
 from __future__ import annotations
 
-from .poker_math import RANKS, parse_cards
+from .hand_math import RANKS, parse_cards
 
 # От сильного к слабому: доля раздач, которую класс берёт у случайной руки.
 # Пересчитывается скриптом из ``poker-plan/README.md``; руками не правится.

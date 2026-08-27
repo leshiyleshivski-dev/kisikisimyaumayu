@@ -22,6 +22,14 @@ class SecretModuleManager:
             raise ValueError(f"Пасхалка «{secret_id}» уже зарегистрирована")
         self._factories[secret_id] = factory
 
+    def is_registered(self, secret_id: str) -> bool:
+        """Есть ли у рецепта экран.
+
+        Рецепт живёт в ``food_catalog.py`` и переживает свой модуль: у
+        ORE HUNT кот и последовательность остались, а экрана больше нет.
+        """
+        return secret_id in self._factories
+
     def get(self, secret_id: str) -> Any:
         if secret_id not in self._factories:
             raise KeyError(f"Неизвестная пасхалка: {secret_id}")

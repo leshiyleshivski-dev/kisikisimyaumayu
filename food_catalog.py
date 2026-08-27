@@ -38,6 +38,8 @@ SECRET_RECIPES = (
     ("phone", "PHONE BEAT", ("milk", "sausage", "cat_treat")),
     ("builder", "BRICK TIMING", ("chicken", "carrot", "pumpkin")),
     ("volt", "VOLT GRID", ("cheese", "shrimp", "mystery_meal")),
+    # У ORE HUNT экрана сейчас нет: логику шахтёра сняли, а котик и рецепт
+    # остались. Кормилка на такой рецепт отвечает словами, а не модулем.
     ("miner", "ORE HUNT", ("kibble", "burger", "milk")),
     ("race_bettor", "RACE BETTOR", ("carrot", "cat_treat", "fish")),
     ("slot_spinner", "SLOT SPINNER", ("pizza", "donut", "ice_cream")),

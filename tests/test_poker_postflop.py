@@ -6,10 +6,10 @@ import unittest
 
 import numpy as np
 
-from kisiki.modules.poker_math import (
+from kisiki.modules.poker.hand_math import (
     BET_POT_SHARE, Advice, equity, equity_vs_range, quick_bets,
 )
-from kisiki.modules.poker_postflop import (
+from kisiki.modules.poker.postflop import (
     BIG_BET_KEEP, CALLER_KEEP, CHECK_KEEP, LIVE_RANGE_SHARE, MAX_BET_SHARE,
     PLAN_TRIALS, SHOVE_BLUFF, SHOVE_KEEP, SMALL_BET_KEEP, VALUE_BET_EDGE,
     aggression_bluff, aggression_keep, bet_share, caller_keep, choose_quick_bet,
@@ -17,7 +17,7 @@ from kisiki.modules.poker_postflop import (
     postflop_advice, raise_plan, range_combos, ranked_on_board, reply_sizes,
     strength_on_board, value_bet_equity,
 )
-from kisiki.modules.poker_ranges import hand_class, top_share
+from kisiki.modules.poker.ranges import hand_class, top_share
 
 
 def classes_of(combos: np.ndarray) -> set[str]:
@@ -107,7 +107,7 @@ class StrengthOnBoardTests(unittest.TestCase):
 
     @staticmethod
     def code(text: str) -> int:
-        from kisiki.modules.poker_math import card_code
+        from kisiki.modules.poker.hand_math import card_code
         return card_code(text)
 
 
@@ -156,7 +156,7 @@ class NarrowingTests(unittest.TestCase):
 
     @staticmethod
     def code(text: str) -> int:
-        from kisiki.modules.poker_math import card_code
+        from kisiki.modules.poker.hand_math import card_code
         return card_code(text)
 
 

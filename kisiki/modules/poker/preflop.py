@@ -22,10 +22,10 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from math import comb
 
-from .poker_math import (
+from .hand_math import (
     equity_vs_range, quick_bet_for, pot_odds, quick_bets, round_bet,
 )
-from .poker_ranges import hand_class, parse_range, range_share, top_share
+from .ranges import hand_class, parse_range, range_share, top_share
 
 # Места за столом в порядке хода до флопа. Первым говорит тот, кто сидит
 # после большого блайнда, последним — сам большой блайнд.
@@ -256,6 +256,36 @@ def shove_ev(
     return value
 
 
+def hand_word(count: int) -> str:
+    """«12 рук», но «2 руки» и «21 руку».
+
+    Стоит это слово в винительном падеже — «отсюда открывают 21 руку из ста»,
+    — и в спешке за пятнадцать секунд «21 рук» цепляет глаз ровно там, где он
+    нужен цифрам.
+    """
+    if 11 <= count % 100 <= 14:
+        return "рук"
+    last = count % 10
+    if last == 1:
+        return "руку"
+    if last in (2, 3, 4):
+        return "руки"
+    return "рук"
+
+
+def in_hundred(names) -> str:
+    """«22 руки из ста» — сколько раздач занимает диапазон.
+
+    Число это отвечает на единственный вопрос, который вызывает совет «фолд»:
+    а играть-то когда. Без него подряд идущие фолды читаются как поломка, хотя
+    двадцать рук из ста — обычная плотность игры, а не молчание помощника.
+    Считается оно по сочетаниям, а не по классам: `A♠K♦` и `A♠K♠` — это
+    двенадцать раздач и четыре, а не «две руки».
+    """
+    count = round(range_share(names) * 100)
+    return f"{count} {hand_word(count)} из ста"
+
+
 def blinds_word(count: int) -> str:
     """«9 блайндов», но «4 блайнда» и «21 блайнд».
 
@@ -285,7 +315,7 @@ def raise_reply(name: str, position: str, *, heads_up: bool = False) -> str:
 
     До флопа размера в плане и не будет: таблица отвечает на само повышение, а
     не на его величину. После флопа размер решает всё, и там план называет
-    границу — ``plan_line`` в ``poker_postflop.py``.
+    границу — ``plan_line`` в ``postflop.py``.
     """
     three_bets = HEADS_UP_THREE_BET if heads_up else THREE_BET_RANGES[position]
     calls = HEADS_UP_CALL if heads_up else CALL_RANGES[position]
@@ -338,7 +368,8 @@ def _chart_advice(
             )
         return PreflopAdvice(
             "фолд", 0,
-            f"{name} {where} против повышения не играется. "
+            f"{name} {where} против повышения не играется — отвечают "
+            f"{in_hundred(three_bets | calls)}. "
             "Это и есть та рука, на которой теряют весь вечер",
             name, "таблица",
         )
@@ -367,8 +398,8 @@ def _chart_advice(
         )
     return PreflopAdvice(
         "фолд", 0,
-        f"{name} {where} не открывают. Сбросить сейчас дешевле, "
-        "чем разбираться после флопа",
+        f"{name} {where} не открывают — отсюда открывают {in_hundred(opens)}. "
+        "Сбросить сейчас дешевле, чем разбираться после флопа",
         name, "таблица",
     )
 

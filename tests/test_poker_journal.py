@@ -8,11 +8,13 @@ import unittest
 from pathlib import Path
 
 from clean_poker_journal import clean, drop_twins, fix_blinds, round_results
-from kisiki.modules.poker_journal import (
+from kisiki.modules.poker.journal import (
     JOURNAL_LIMIT, Hand, Journal, hand_result, hands_word, new_hand,
 )
 
-MOVES = ((100, "начало", None), (101, "блайнд", None), (103, "ставка", 200))
+MOVES = (
+    (100, "начало", None, None), (101, "блайнд", None, 0), (103, "ставка", 200, 1),
+)
 
 BIG_BLIND = 50
 
@@ -136,6 +138,60 @@ class ShowdownTests(unittest.TestCase):
         self.assertEqual(len(journal.opponent_hands()), 3)
 
 
+class AdviceTests(unittest.TestCase):
+    """Что помощник советовал — и послушали ли его.
+
+    Единственная пара чисел, которой «совет плохой» отличается от «совет не
+    послушали». Разобрать это задним числом нельзя: таблица к тому времени
+    уже поменялась, и прогон старой раздачи через новую отвечает не про тот
+    вечер.
+    """
+
+    def test_the_advice_before_the_flop_is_the_first_one(self) -> None:
+        hand = played(-200, advice=((0, "фолд"), (3, "чек")))
+
+        self.assertEqual(hand.advised, "фолд")
+
+    def test_a_hand_advised_only_after_the_flop_has_none_before_it(self) -> None:
+        # До флопа помощник промолчал — значит, и спрашивать с него за эту
+        # раздачу нечего.
+        self.assertIsNone(played(-200, advice=((3, "фолд"),)).advised)
+        self.assertIsNone(played(-200).advised)
+
+    def test_a_fold_costs_the_blind_and_not_a_chip_more(self) -> None:
+        # Доплатить, сбросив карты, невозможно: пас стоит ровно блайнд, а вне
+        # блайндов не стоит ничего.
+        self.assertFalse(played(-BIG_BLIND, position="BB").played_on)
+        self.assertFalse(played(-BIG_BLIND // 2, position="SB").played_on)
+        self.assertFalse(played(0, position="BTN").played_on)
+
+    def test_any_chip_over_the_blind_means_the_hand_was_played(self) -> None:
+        # Выиграть, сбросив карты, тоже нельзя — плюс это тоже «доиграна».
+        self.assertTrue(played(-BIG_BLIND - 50, position="BB").played_on)
+        self.assertTrue(played(-50, position="BTN").played_on)
+        self.assertTrue(played(400, position="BB").played_on)
+
+    def test_an_uncounted_hand_says_nothing_about_discipline(self) -> None:
+        # Результат не сошёлся — между раздачами покупали фишки, и по стеку не
+        # понять, доигрывалась раздача или нет.
+        self.assertFalse(played(None, position="BB").played_on)
+
+    def test_ignored_folds_are_counted(self) -> None:
+        journal = Journal()
+        journal.add(played(-BIG_BLIND, position="BB", advice=((0, "фолд"),)))
+        journal.add(played(-4000, position="CO", advice=((0, "фолд"), (3, "чек"))))
+        journal.add(played(-4000, position="CO", advice=((0, "рейз"),)))
+
+        self.assertEqual(journal.ignored_folds(), (1, 2))
+
+    def test_a_journal_without_advice_counts_nothing(self) -> None:
+        # Старый журнал советов не помнит, и выдумывать их задним числом
+        # нельзя.
+        journal = Journal(hands=[played(-4000, position="CO")])
+
+        self.assertEqual(journal.ignored_folds(), (0, 0))
+
+
 class DiskTests(unittest.TestCase):
     def test_the_journal_survives_a_restart(self) -> None:
         # Сравнивать периоды по раздачам одного вечера бессмысленно: журнал
@@ -154,6 +210,17 @@ class DiskTests(unittest.TestCase):
             self.assertTrue(read.hands[0].won)
             self.assertIsNone(read.hands[1].result)
             self.assertAlmostEqual(read.bb_per_100(), 200.0)
+
+    def test_the_advice_survives_a_restart(self) -> None:
+        # Спрашивают журнал уже следующим вечером — после выхода из
+        # приложения, а не в ту же минуту.
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "poker_journal.json"
+            Journal(path=path).add(played(-200, advice=((0, "фолд"), (3, "чек"))))
+
+            self.assertEqual(
+                Journal.load(path).hands[0].advice, ((0, "фолд"), (3, "чек"))
+            )
 
     def test_a_broken_file_is_an_empty_journal_and_not_a_crash(self) -> None:
         # Статистика не стоит упавшего экрана посреди раздачи.
@@ -229,6 +296,39 @@ class MoveTests(unittest.TestCase):
 
         self.assertEqual(journal.moves(), 0)
         self.assertEqual(len(journal), 1)
+
+
+class PlayerTests(unittest.TestCase):
+    """Кто сделал ход: номер в списке отпечатков имён."""
+
+    def test_players_are_counted(self) -> None:
+        journal = Journal()
+        journal.add(played(100, events=(
+            (100, "начало", None, None), (101, "колл", None, 0),
+            (102, "фолд", None, 1),
+        )))
+        journal.add(played(-50, events=((110, "чек", None, 0),)))
+
+        self.assertEqual(journal.players(), 2, "строки самой игры ничьи")
+
+    def test_moves_written_before_players_are_still_read(self) -> None:
+        # Журнал пишется с первого запуска, а игрок в ходе завёлся позже.
+        # Выбросить старые ходы значило бы выбросить весь замер по столу
+        # заодно: ходы в них настоящие, просто ничьи.
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "poker_journal.json"
+            path.write_text(json.dumps([{
+                "hole": ["Ah", "Kd"], "big_blind": 50, "pot": 500, "result": 100,
+                "events": [[100, "начало", None], [103, "ставка", 200]],
+            }]), encoding="utf-8")
+
+            journal = Journal.load(path)
+
+            self.assertEqual(journal.hands[0].events, (
+                (100, "начало", None, None), (103, "ставка", 200, None),
+            ))
+            self.assertEqual(journal.players(), 0)
+            self.assertEqual(journal.moves(), 2)
 
 
 class CleanupTests(unittest.TestCase):

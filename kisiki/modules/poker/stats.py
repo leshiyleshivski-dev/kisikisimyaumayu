@@ -19,6 +19,15 @@
 зрение прочло с плашки. Пока эти два числа рядом, ступеням размеров можно
 верить.
 
+Считать так можно **не всякую раздачу**. Началом банка служит строка
+«Началась новая игра», а игра пишет её не всегда: свёрнутая строка событий
+гаснет через пару секунд, и половина начал теряется. Без начала банк
+складывается с нуля посреди раздачи — и доли выходят вчетверо крупнее
+настоящих. На журнале за 25–26 августа это видно в лоб: у раздач со строкой
+начала расхождение банков 6 %, у раздач без неё — 93 %, а вместе они дают
+80 % и двадцать ставок замера из тридцати трёх. Поэтому раздача без начала в
+замер не идёт вовсе, а сколько их выкинуто — говорит ``measured()``.
+
 Префлоп и постфлоп считаются отдельно, и это не педантизм: до флопа открывают
 в четыре-двадцать блайндов при банке в полторы ставки, и в долях банка такая
 ставка выходит вдесятеро крупнее любой постфлопной. Сложить их вместе значит
@@ -34,7 +43,8 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from statistics import median
 
-from .poker_journal import Hand, Journal
+from .journal import Hand, Journal, hands_word
+from .postflop import keep_for_share
 
 # Ступени размера — те же, которыми модуль читает чужую агрессию: маленькая
 # ставка, большая, олл-ин. Иначе замер не с чем было бы сравнивать.
@@ -51,7 +61,7 @@ class Aggression:
 
     amount: int
     # Размер в долях банка, каким он был до ставки, — так же его меряет и
-    # модель: `bet_share()` в `poker_postflop.py`.
+    # модель: `bet_share()` в `postflop.py`.
     share: float
     preflop: bool = False
     called: int = 0
@@ -71,10 +81,15 @@ class Aggression:
 
 @dataclass(frozen=True)
 class HandWalk:
-    """Раздача, пройденная по ходам: ставки и досчитанный банк."""
+    """Раздача, пройденная по ходам: ставки и досчитанный банк.
+
+    ``clean`` — видели ли начало раздачи. Не видели, значит банк считался с
+    нуля с середины, и доли ставок в нём ничего не значат.
+    """
 
     bets: tuple[Aggression, ...] = ()
     pot: int = 0
+    clean: bool = False
 
 
 def walk(hand: Hand) -> HandWalk:
@@ -88,12 +103,14 @@ def walk(hand: Hand) -> HandWalk:
     if not hand.big_blind:
         return HandWalk()
     pot = highest = blinds = 0
+    clean = False
     preflop = True
     bets: list[Aggression] = []
     current: int | None = None
-    for _at, action, amount in hand.events:
+    for _at, action, amount, _who in hand.events:
         if action == "начало":
             pot = highest = blinds = 0
+            clean = True
             preflop, current = True, None
         elif action == "блайнд":
             blinds += 1
@@ -129,12 +146,18 @@ def walk(hand: Hand) -> HandWalk:
             preflop, highest, current = False, 0, None
         else:
             current = None
-    return HandWalk(bets=tuple(bets), pot=pot)
+    return HandWalk(bets=tuple(bets), pot=pot, clean=clean)
 
 
 def hand_aggression(hand: Hand) -> tuple[Aggression, ...]:
-    """Ставки одной раздачи вместе с ответами на них."""
-    return walk(hand).bets
+    """Ставки одной раздачи вместе с ответами на них.
+
+    Раздача без начала не даёт ни одной: банк в ней складывался с нуля с
+    середины, и доля банка — единственное, ради чего ставку и меряют, — вышла
+    бы завышенной в разы. Пустой ответ тут честнее посчитанного.
+    """
+    walked = walk(hand)
+    return walked.bets if walked.clean else ()
 
 
 def table_aggression(hands, *, preflop: bool | None = None) -> tuple[Aggression, ...]:
@@ -174,10 +197,23 @@ def keep_share(bets) -> float | None:
     return sum(bet.kept for bet in bets) / faced
 
 
+def model_keep(bets) -> float | None:
+    """Какую долю ответивших модель ждала на эти же самые ставки.
+
+    Вторая половина сравнения. Одно измеренное число само по себе не говорит,
+    надо ли что-то менять: 52 % не пасовавших — это много или мало, зависит от
+    того, сколько ждала модель. Пара чисел отвечает сразу.
+    """
+    faced = sum(bet.faced for bet in bets)
+    if faced < ENOUGH_ANSWERS:
+        return None
+    return sum(bet.faced * keep_for_share(bet.share) for bet in bets) / faced
+
+
 def won_amount(hand: Hand) -> int | None:
     """Сколько банка забрали в этой раздаче — по строке «выиграл N фишек»."""
     taken = [
-        amount for _at, action, amount in hand.events
+        amount for _at, action, amount, _who in hand.events
         if action == "выигрыш" and amount
     ]
     return sum(taken) if taken else None
@@ -192,12 +228,25 @@ def pot_error(hands) -> float | None:
     неправильно: банк там прочитан с плашки своей раздачи, а ходы к раздаче
     привязаны по журналу, и лишний сдвиг на раздачу спутал бы одно с другим.
     """
-    errors = [
-        abs(walk(hand).pot - won_amount(hand)) / won_amount(hand)
-        for hand in hands
-        if hand.big_blind and hand.events and won_amount(hand)
-    ]
+    errors = []
+    for hand in hands:
+        walked, taken = walk(hand), won_amount(hand)
+        if not walked.clean or not taken:
+            continue
+        errors.append(abs(walked.pot - taken) / taken)
     return median(errors) if errors else None
+
+
+def measured(hands) -> tuple[int, int]:
+    """Сколько раздач попало в замер и сколько их всего с ходами.
+
+    Числа эти расходятся сами: строку начала игра пишет не всегда, а раздача
+    без неё в замер не идёт. Молча её выкинуть мало — надо сказать, сколько
+    выкинуто, иначе тонкий замер выглядит как редкая игра за столом, а не как
+    недочитанная строка событий, которую достаточно развернуть стрелкой.
+    """
+    with_moves = [hand for hand in hands if hand.big_blind and hand.events]
+    return sum(1 for hand in with_moves if walk(hand).clean), len(with_moves)
 
 
 def answers_line(journal: Journal) -> str:
@@ -217,8 +266,23 @@ def answers_line(journal: Journal) -> str:
     ]
     if ready:
         return "платят на ставку: " + "  ·  ".join(ready)
+    # Ступеней три, и по отдельности они набираются годами: за два вечера в
+    # нижнюю, ту самую, ради которой всё и затевалось, попало два ответа.
+    # Сложенные вместе, они дают число уже сейчас — грубее, зато не выдуманное.
+    # Рядом стоит то, что на эти же ставки ждала модель: без него измеренная
+    # доля не говорит, надо ли что-то менять.
     answers = sum(bet.faced for bet in bets)
-    return f"ответов на ставки: {answers} — мало, чтобы мерить, сколько тут платят"
+    share, expected = keep_share(bets), model_keep(bets)
+    if share is not None and expected is not None:
+        return (
+            f"на ставку не пасует {share:.0%} из {answers} — "
+            f"модель ждёт {expected:.0%}"
+        )
+    clean, total = measured(journal.hands)
+    return (
+        f"ответов на ставки: {answers} — мало, чтобы мерить · "
+        f"в замере {clean} {hands_word(clean)} из {total}"
+    )
 
 
 def answer_lines(journal: Journal) -> list[str]:
@@ -226,7 +290,14 @@ def answer_lines(journal: Journal) -> list[str]:
     bets = table_aggression(journal.hands, preflop=False)
     if not bets:
         return ["постфлоп-ставок в журнале пока нет — строка событий была свёрнута"]
+    answers = sum(bet.faced for bet in bets)
+    share, expected = keep_share(bets), model_keep(bets)
     lines = []
+    if share is not None and expected is not None:
+        lines.append(
+            f"все размеры вместе: не пасует {share:.0%} из {answers} ответов, "
+            f"модель ждёт {expected:.0%}"
+        )
     for _edge, name in SIZE_STEPS:
         kept, faced = keep_by_size(bets)[name]
         if faced < ENOUGH_ANSWERS:

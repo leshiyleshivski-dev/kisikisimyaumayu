@@ -9,7 +9,7 @@
 сотни, а прогресс читается на каждом запуске игры, и мешать их незачем.
 
 Модуль ничего не рисует и никуда не нажимает — как и остальная покерная
-математика. Границы раздачи ему приносит ``poker.py``, где живёт память между
+математика. Границы раздачи ему приносит ``module.py``, где живёт память между
 кадрами.
 
 Результат раздачи считается по стеку **между** раздачами, а не внутри неё. В
@@ -80,16 +80,56 @@ class Hand:
     # когда чужие карты вообще видны, — и первое, что понадобится, когда
     # дойдёт очередь до статистики по соперникам.
     shown: tuple[tuple[int, tuple[str, ...]], ...] = ()
-    # Чужие ходы из строки событий: время, что сделали и на сколько. Своих
-    # ходов помощник не отличает от чужих — имена он не читает, — но для
-    # общей статистики по столу этого и не нужно.
+    # Чужие ходы из строки событий: время, что сделали, на сколько и кто —
+    # номер игрока в списке отпечатков (``players.py``); ``None``, если имени
+    # на строке не было. Имена помощник не читает и своих ходов от чужих не
+    # отличает, но узнать, что это тот же человек, что в раздаче номер сорок
+    # семь, по номеру уже можно.
     events: tuple[tuple, ...] = ()
+    # Что помощник советовал в этой раздаче: сколько карт лежало на борде и
+    # какой был совет. Без этой записи журнал отвечает только на «сколько
+    # проиграли», а спрашивают его о другом — совет был плохой или совет не
+    # послушали. Разобрать это задним числом нельзя: таблица к тому времени
+    # уже поменялась, и прогон старой раздачи через новую таблицу отвечает
+    # не про тот вечер.
+    advice: tuple[tuple[int, str], ...] = ()
     played_at: float = 0.0
 
     @property
     def counted(self) -> bool:
         """Идёт ли раздача в счёт: результат известен и есть чем его мерить."""
         return self.result is not None and bool(self.big_blind)
+
+    @property
+    def advised(self) -> str | None:
+        """Совет до флопа; ``None`` — до флопа помощник промолчал.
+
+        Именно он и решает раздачу целиком: сброшенную руку не приходится
+        доигрывать позади, а проигрывается она не до флопа, а после.
+        """
+        if self.advice and self.advice[0][0] == 0:
+            return self.advice[0][1]
+        return None
+
+    @property
+    def blind_cost(self) -> int:
+        """Во сколько обходится раздача, если сбросить сразу: только блайнд."""
+        if not self.big_blind or self.position not in ("SB", "BB"):
+            return 0
+        return self.big_blind if self.position == "BB" else self.big_blind // 2
+
+    @property
+    def played_on(self) -> bool:
+        """Доиграна ли раздача — ушло ли из стека больше одного блайнда.
+
+        Мерка косвенная: сколько именно доложено в банк, экран не показывает,
+        а стек между раздачами показывает. Пас стоит ровно блайнд, любая
+        доплата дороже, а выиграть, сбросив карты, нельзя вовсе. Свой большой
+        блайнд, отданный лимпом и брошенный на флопе, от паса тут неотличим —
+        одна раздача из шести и только при точном совпадении суммы. Считать
+        по видимому с ошибкой в эту раздачу честнее, чем не считать вовсе.
+        """
+        return self.result is not None and self.result != -self.blind_cost
 
     @property
     def blinds_won(self) -> float:
@@ -177,11 +217,28 @@ class Journal:
     def wins(self) -> int:
         return sum(1 for hand in self.hands if hand.won)
 
+    def ignored_folds(self) -> tuple[int, int]:
+        """Сколько раз до флопа советовался пас — и сколько из них доиграно.
+
+        Единственная пара чисел, которой «совет плохой» отличается от «совет
+        не послушали». Без неё спор об этом упирается в память, а память
+        помнит две выигранные раздачи из тринадцати доигранных.
+        """
+        folds = [hand for hand in self.hands if hand.advised == "фолд"]
+        return sum(1 for hand in folds if hand.played_on), len(folds)
+
     def showdowns(self) -> int:
         return sum(1 for hand in self.hands if hand.showdown)
 
     def showdown_wins(self) -> int:
         return sum(1 for hand in self.hands if hand.showdown and hand.won)
+
+    def players(self) -> int:
+        """Сколько разных людей за столом узнано по строке событий."""
+        return len({
+            who for hand in self.hands
+            for _at, _action, _amount, who in hand.events if who is not None
+        })
 
     def opponent_hands(self) -> tuple[tuple[int, tuple[str, ...]], ...]:
         """Все чужие руки, дошедшие до вскрытия, — копилка на будущее."""
@@ -199,7 +256,7 @@ class Journal:
         только по тому, как за этими столами играют на самом деле.
         """
         return Counter(
-            action for hand in self.hands for _at, action, _amount in hand.events
+            action for hand in self.hands for _at, action, _amount, _who in hand.events
         )
 
     # --- диск ---
@@ -257,9 +314,20 @@ def _hand_from(item) -> Hand | None:
             for seat, cards in item.get("shown", ())
             if _cards(cards)
         )
+        # Ход из файла бывает и втроём: до того, как в нём завёлся игрок,
+        # журнал писал время, действие и сумму. Такие раздачи не выбрасываем —
+        # ходы в них настоящие, просто ничьи.
         events = tuple(
-            (_none_or_int(at), str(action), _none_or_int(amount))
-            for at, action, amount in item.get("events", ())
+            (
+                _none_or_int(move[0]), str(move[1]), _none_or_int(move[2]),
+                _none_or_int(move[3]) if len(move) > 3 else None,
+            )
+            for move in item.get("events", ())
+            if len(move) >= 3
+        )
+        advice = tuple(
+            (int(street), str(action))
+            for street, action in item.get("advice", ())
         )
         return Hand(
             hole=_cards(item.get("hole")),
@@ -272,6 +340,7 @@ def _hand_from(item) -> Hand | None:
             showdown=bool(item.get("showdown")),
             shown=shown,
             events=events,
+            advice=advice,
             played_at=float(item.get("played_at", 0.0)),
         )
     except (TypeError, ValueError):

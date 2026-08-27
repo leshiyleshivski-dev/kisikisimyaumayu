@@ -8,13 +8,13 @@ from itertools import combinations
 
 import numpy as np
 
-from kisiki.modules.poker_math import (
+from kisiki.modules.poker.hand_math import (
     BET_POT_SHARE, FLUSH, FULL_HOUSE, HIGH_CARD, PAIR, QUADS, STRAIGHT,
     STRAIGHT_FLUSH, TRIPS, TWO_PAIR, bet_size, card_code, card_text, equity,
     equity_vs_range, evaluate, hand_category, hand_score, parse_cards, pot_odds,
     quick_bet_for, quick_bets, round_bet,
 )
-from kisiki.modules.poker_ranges import top_share
+from kisiki.modules.poker.ranges import top_share
 
 
 def slow_best_five(codes: list[int]) -> tuple:

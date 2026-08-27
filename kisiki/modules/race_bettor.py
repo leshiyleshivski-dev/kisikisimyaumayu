@@ -13,7 +13,8 @@ import numpy as np
 from ..core import (
     APP_BG, GOLD, MINT, MUTED, SURFACE_ALT, TEXT, VK_F, VK_F9, VK_F11,
     activate_window, client_bounds, cursor_position, find_game_window,
-    resource_path, send_key_tap, send_left_click, user32, window_title,
+    glide_cursor_to, resource_path, send_key_tap, send_left_click, user32,
+    window_title,
 )
 from .ui import connection_panel, hotkey_bar, module_header, panel, step_list
 
@@ -389,28 +390,8 @@ class RaceBettorModule(ctk.CTkFrame):
         self.stats.set(f"Ставок {self.bets}  ·  проигрышей {self.losses}")
 
     def smooth_move_to(self, target_x: int, target_y: int) -> bool:
-        """Move the real cursor along a slightly curved, human-sized path."""
-        start_x, start_y = cursor_position()
-        distance = max(1.0, ((target_x - start_x) ** 2 + (target_y - start_y) ** 2) ** 0.5)
-        duration = random.uniform(0.38, 0.62) + min(0.18, distance / 9000)
-        steps = max(24, min(72, round(duration / 0.010)))
-        dx, dy = target_x - start_x, target_y - start_y
-        length = max(1.0, (dx * dx + dy * dy) ** 0.5)
-        bend = random.uniform(-14.0, 14.0)
-        control_x = (start_x + target_x) / 2 - dy / length * bend
-        control_y = (start_y + target_y) / 2 + dx / length * bend
-        for step in range(1, steps + 1):
-            raw = step / steps
-            # Smoothstep removes the robotic instant start/stop.
-            t = raw * raw * (3.0 - 2.0 * raw)
-            inverse = 1.0 - t
-            x = inverse * inverse * start_x + 2 * inverse * t * control_x + t * t * target_x
-            y = inverse * inverse * start_y + 2 * inverse * t * control_y + t * t * target_y
-            if not user32.SetCursorPos(round(x), round(y)):
-                return False
-            if step < steps:
-                time.sleep(duration / steps)
-        return True
+        """Плавный подвод курсора живёт в ``core``: им пользуется и шахтёр."""
+        return glide_cursor_to(target_x, target_y)
 
     def restore_previous_window(self, *, restore_cursor: bool = False) -> None:
         previous = self.previous_window

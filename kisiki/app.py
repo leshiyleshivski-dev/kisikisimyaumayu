@@ -31,6 +31,7 @@ from .clicker import (
 from .modules import (
     BlackjackModule, BuilderModule, ElectricianModule, MinerModule, PhoneModule,
     PokerModule, RaceBettorModule, RouletteModule, SlotSpinnerModule,
+    fresh_daily_stats,
 )
 
 
@@ -148,9 +149,9 @@ class KisikiApp(ctk.CTk):
             "decor": {key: 0 for key in DECOR},
             "adventure": {},
             "adventures_completed": 0,
-            "miner_stats": {
-                "date": today_key(), "total": 0, "unknown": 0, "ores": {},
-            },
+            # Счёт добытой руды за день. Живёт здесь, а не отдельным файлом:
+            # запись одна на камень, а не сотни за вечер, как в покере.
+            "miner_stats": fresh_daily_stats(),
             "last_seen": time.time(),
             "cats": [fresh_cat() for _ in CATS],
             "cat_roster_version": 2,
@@ -180,16 +181,9 @@ class KisikiApp(ctk.CTk):
                     }
                 game["adventures_completed"] = max(0, int(saved.get("adventures_completed", 0)))
                 if isinstance(saved.get("miner_stats"), dict):
-                    saved_stats = saved["miner_stats"]
-                    game["miner_stats"] = {
-                        "date": str(saved_stats.get("date", "")),
-                        "total": max(0, int(saved_stats.get("total", 0))),
-                        "unknown": max(0, int(saved_stats.get("unknown", 0))),
-                        "ores": {
-                            str(key): max(0, int(value))
-                            for key, value in saved_stats.get("ores", {}).items()
-                        } if isinstance(saved_stats.get("ores"), dict) else {},
-                    }
+                    # Разбирать поштучно незачем: OreTally чинит дату, счётчики
+                    # и незнакомые ключи на первом же обращении.
+                    game["miner_stats"] = dict(saved["miner_stats"])
                 game["last_seen"] = float(saved.get("last_seen", time.time()))
                 saved_cats = saved["cats"]
                 # Миграция от старого набора из шести мем-котов: сохраняем
@@ -450,6 +444,11 @@ class KisikiApp(ctk.CTk):
             copy.pack(side="left")
             ctk.CTkLabel(copy, text=cat_name, font=ctk.CTkFont("Segoe UI", 16, "bold"), text_color=cat_color).pack(anchor="w")
             ctk.CTkLabel(copy, text=module_title, font=ctk.CTkFont("Segoe UI", 9, "bold"), text_color=MUTED).pack(anchor="w")
+            if not self.secret_modules.is_registered(secret_id):
+                ctk.CTkLabel(
+                    copy, text="модуль в разработке",
+                    font=ctk.CTkFont("Segoe UI", 9), text_color="#6E7C92",
+                ).pack(anchor="w")
             row = ctk.CTkFrame(card, fg_color="transparent")
             row.pack(fill="x", padx=22, pady=(0, 18))
             for index, food_id in enumerate(ingredients):
@@ -503,6 +502,12 @@ class KisikiApp(ctk.CTk):
                 self.pantry_status.set(f"Собираем угощение: {recipe_text}")
             else:
                 self.pantry_status.set(f"Ура, ты покормил котика: {FOOD_NAMES[food_id]}!")
+            return
+        if not self.secret_modules.is_registered(secret_id):
+            # Рецепт есть, а экрана нет. Сейчас экраны есть у всех девяти, но
+            # так уже жил ORE HUNT, пока логику шахтёра снимали с проекта.
+            # Серию RecipeProgress уже сбросил, поэтому кормить можно дальше.
+            self.pantry_status.set("Котик доволен, но его модуль ещё в разработке.")
             return
         self.recipe_unlock_pending = True
         self.pantry_status.set("Котик довольно мурчит…")

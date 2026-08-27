@@ -22,11 +22,11 @@ from __future__ import annotations
 
 import numpy as np
 
-from .poker_math import (
+from .hand_math import (
     Advice, QuickBet, bet_size, category_name, equity_vs_range, evaluate,
     parse_cards, pot_odds, quick_bets, round_bet, spaced,
 )
-from .poker_ranges import combos_of, top_share
+from .ranges import combos_of, top_share
 
 # С какой долей рук вообще доходят до флопа. За столами казино играют широко,
 # поэтому берём больше половины: недооценить чужой диапазон опаснее, чем
@@ -140,7 +140,17 @@ def caller_keep(pot: int, bet: int) -> float:
 
     ``pot`` — банк уже вместе с нашей ставкой, как его считает и зрение.
     """
-    share = bet_share(pot, bet)
+    return keep_for_share(bet_share(pot, bet))
+
+
+def keep_for_share(share: float) -> float:
+    """Та же минимальная защита, но от готовой доли банка.
+
+    Вынесено ради замера: `stats.py` считает по журналу, какая доля на самом
+    деле не пасует, и сравнивать её надо ровно с этой формулой, а не с её
+    пересказом. Разойдись они — и сравнение мерило бы разницу между двумя
+    записями одного и того же, а не между моделью и столом.
+    """
     if share <= 0:
         return CHECK_KEEP
     return 1 / (1 + share)
