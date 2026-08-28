@@ -59,6 +59,48 @@ PURPLE = "#A994ED"
 CAT_IMAGE_SIZES = ((125, 98), (320, 255), (54, 44), (64, 64))
 FOOD_IMAGE_SIZES = ((38, 38), (48, 48))
 
+
+class SmoothScrollFrame(ctk.CTkScrollableFrame):
+    """Скролл-контейнер, который не пересчитывает scrollregion на каждый пиксель.
+
+    Базовый CTkScrollableFrame на любое <Configure> внутренней рамки зовёт
+    bbox("all"), а тот заставляет Tk пересобрать всю вложенную сетку. Один
+    пересчёт стоит недорого, но при перетаскивании рамки окна их приходят
+    сотни в секунду. Здесь события копятся до ближайшего таймера, поэтому на
+    серию приходится один пересчёт.
+    """
+
+    SCROLLREGION_DELAY_MS = 30
+
+    def __init__(self, *args, **kwargs) -> None:
+        # Атрибуты нужны до super(): базовый __init__ уже создаёт виджеты и
+        # может вызвать наш обработчик.
+        self.scrollregion_job: str | None = None
+        self.scrollregion: tuple[int, int, int, int] | None = None
+        super().__init__(*args, **kwargs)
+        # Базовую привязку ставят без add, поэтому наша её заменяет.
+        self.bind("<Configure>", self.queue_scrollregion)
+
+    def queue_scrollregion(self, _event=None) -> None:
+        if self.scrollregion_job is None:
+            self.scrollregion_job = self.after(
+                self.SCROLLREGION_DELAY_MS, self.apply_scrollregion
+            )
+
+    def apply_scrollregion(self) -> None:
+        self.scrollregion_job = None
+        region = self._parent_canvas.bbox("all")
+        if region != self.scrollregion:
+            self.scrollregion = region
+            self._parent_canvas.configure(scrollregion=region)
+
+    def destroy(self) -> None:
+        if self.scrollregion_job is not None:
+            self.after_cancel(self.scrollregion_job)
+            self.scrollregion_job = None
+        super().destroy()
+
+
 class KisikiApp(ctk.CTk):
     # Полосу категории считаем по самому узкому окну: на 1040 px «ДОБЫВАЮЩИЕ
     # КОТИКИ» ещё помещались бы, а на 960 обрезались бы до «ОБЫВАЮЩИЕ КОТИК» —
@@ -106,6 +148,9 @@ class KisikiApp(ctk.CTk):
         self.sound_sequence = 0
         self.content = ctk.CTkFrame(self, fg_color=APP_BG, corner_radius=0)
         self.content.pack(fill="both", expand=True)
+        self.window_size = (self.winfo_width(), self.winfo_height())
+        # add="+": CTk вешает на окно собственный <Configure> ещё в super().
+        self.bind("<Configure>", self.on_window_resize, add="+")
         self.secret_modules = SecretModuleManager()
         self.secret_modules.register(
             "roulette",
@@ -407,10 +452,36 @@ class KisikiApp(ctk.CTk):
         таймерное событие переживает чужие update_idletasks, тогда как
         after_idle показал бы наполовину собранный экран.
         """
+        self.hide_content(0)
+
+    # Пока рамку окна тянут мышью, Windows шлёт WM_SIZE десятки раз в секунду,
+    # и Tk на каждое событие переставляет все триста с лишним виджетов экрана.
+    # Это полсекунды работы на кадр — отсюда и рывки, тогда как разворот на
+    # весь экран обходится одним таким кадром и потому кажется мгновенным.
+    # Скрытый контейнер переставлять не нужно, поэтому на время перетаскивания
+    # экран прячется и собирается заново один раз, когда размер устоялся.
+    # 120 мс: короткие паузы посреди перетаскивания не запускают пересборку,
+    # но отпущенную рамку экран догоняет незаметно для глаза.
+    RESIZE_SETTLE_MS = 120
+
+    def on_window_resize(self, event) -> None:
+        # <Configure> всплывает к окну от каждого дочернего виджета, а при
+        # перемещении окна приходит с прежними размерами: ни то, ни другое не
+        # требует пересборки экрана.
+        if self.closing or event.widget is not self:
+            return
+        size = (event.width, event.height)
+        if size == self.window_size:
+            return
+        self.window_size = size
+        self.hide_content(self.RESIZE_SETTLE_MS)
+
+    def hide_content(self, restore_delay: int) -> None:
+        """Спрятать экран и вернуть его через restore_delay миллисекунд."""
         if self.content_restore_job is not None:
             self.after_cancel(self.content_restore_job)
         self.content.pack_forget()
-        self.content_restore_job = self.after(0, self.show_content)
+        self.content_restore_job = self.after(restore_delay, self.show_content)
 
     def show_content(self) -> None:
         self.content_restore_job = None
@@ -740,7 +811,7 @@ class KisikiApp(ctk.CTk):
         self.clear()
         self.current_view = "home"
         self.header("уютный клуб хвостатых героев")
-        home = ctk.CTkScrollableFrame(
+        home = SmoothScrollFrame(
             self.content, fg_color="transparent", corner_radius=0,
             scrollbar_button_color="#33435A", scrollbar_button_hover_color="#405570",
         )
@@ -1139,7 +1210,7 @@ class KisikiApp(ctk.CTk):
         self.quest_widgets: dict[str, tuple[ctk.CTkLabel, ctk.CTkButton]] = {}
         self.achievement_widgets: dict[str, tuple[ctk.CTkLabel, ctk.CTkLabel, ctk.CTkButton]] = {}
         self.header("задания, достижения и статистика", self.progress_back)
-        scroll = ctk.CTkScrollableFrame(self.content, fg_color="transparent", corner_radius=0)
+        scroll = SmoothScrollFrame(self.content, fg_color="transparent", corner_radius=0)
         scroll.pack(fill="both", expand=True, padx=46, pady=(0, 24))
 
         level, current, needed = self.club_level()
@@ -1225,7 +1296,7 @@ class KisikiApp(ctk.CTk):
             self.adventure_cat = min(len(CATS) - 1, max(0, int(active_adventure.get("cat", 0))))
         self.header("домик, постоянные бонусы и вылазки")
 
-        body = ctk.CTkScrollableFrame(self.content, fg_color="transparent", corner_radius=0)
+        body = SmoothScrollFrame(self.content, fg_color="transparent", corner_radius=0)
         body.pack(fill="both", expand=True, padx=42, pady=(0, 22))
 
         hero = ctk.CTkFrame(body, fg_color="#1D2838", corner_radius=22, border_width=1, border_color="#34445C")
