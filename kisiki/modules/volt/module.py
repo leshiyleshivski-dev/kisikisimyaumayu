@@ -10,7 +10,8 @@ import mss
 import numpy as np
 
 from ...core import (
-    APP_BG, MINT, MUTED, SURFACE, SURFACE_ALT, TEXT, VK_F9, VK_F11,
+    APP_BG, BODY, FONT_BODY, FONT_CAPTION, FONT_LEAD, MINT, MUTED, SURFACE,
+    SURFACE_ALT, TEXT, VK_F9, VK_F11,
     VK_SPACE, activate_window, client_bounds, find_game_window,
     send_key_tap, user32, window_title,
 )
@@ -109,24 +110,25 @@ class ElectricianModule(TumblerMixin, MazeMixin, CurrentGridMixin, ctk.CTkFrame)
                 text_color=accent if ready else "#69778B",
             ).pack(anchor="w", padx=13, pady=(13, 8))
             ctk.CTkLabel(
-                card, text=title, font=ctk.CTkFont("Segoe UI", 11, "bold"),
+                card, text=title, font=ctk.CTkFont("Segoe UI", FONT_LEAD, "bold"),
                 text_color=TEXT if ready else MUTED,
             ).pack(anchor="w", padx=13)
             ctk.CTkLabel(
-                card, text=description, font=ctk.CTkFont("Segoe UI", 8),
-                text_color=MUTED, wraplength=205, justify="left",
-            ).pack(anchor="w", padx=13, pady=(2, 8))
+                card, text=description, font=ctk.CTkFont("Segoe UI", FONT_BODY),
+                text_color=BODY if ready else MUTED, wraplength=245,
+                justify="left",
+            ).pack(anchor="w", padx=13, pady=(3, 9))
             ctk.CTkLabel(
-                card, text=state, height=22, corner_radius=7,
+                card, text=state, height=24, corner_radius=7,
                 fg_color="#29473F" if ready else "#2A303B",
-                font=ctk.CTkFont("Segoe UI", 7, "bold"),
-                text_color="#83E0C1" if ready else "#778397",
+                font=ctk.CTkFont("Segoe UI", FONT_CAPTION, "bold"),
+                text_color="#8FE7CA" if ready else "#8B98AC",
             ).pack(anchor="w", padx=13, pady=(0, 12))
         ctk.CTkLabel(
             catalog,
             text="Один запуск F9 включает постоянное наблюдение: тип экрана определяется автоматически.",
-            font=ctk.CTkFont("Segoe UI", 8, "bold"), text_color=accent,
-            wraplength=550, justify="left",
+            font=ctk.CTkFont("Segoe UI", FONT_BODY, "bold"), text_color=accent,
+            wraplength=540, justify="left",
         ).pack(anchor="w", padx=18, pady=(0, 15))
 
         live = panel(workspace, "LIVE  /  АВТООПРЕДЕЛЕНИЕ", accent)
@@ -139,16 +141,16 @@ class ElectricianModule(TumblerMixin, MazeMixin, CurrentGridMixin, ctk.CTkFrame)
             text_color=accent,
         ).pack(pady=(20, 8))
         ctk.CTkLabel(
-            scanner, text="СКАНЕР ЭКРАНА", font=ctk.CTkFont("Segoe UI", 8, "bold"),
-            text_color=accent,
+            scanner, text="СКАНЕР ЭКРАНА",
+            font=ctk.CTkFont("Segoe UI", FONT_CAPTION, "bold"), text_color=accent,
         ).pack(pady=(0, 17))
         ctk.CTkLabel(
             live, textvariable=self.target, font=ctk.CTkFont("Segoe UI", 16, "bold"),
             text_color=TEXT, wraplength=300, justify="center",
         ).pack(padx=18, pady=(2, 5))
         ctk.CTkLabel(
-            live, textvariable=self.status, font=ctk.CTkFont("Segoe UI", 9),
-            text_color=MUTED, wraplength=300, justify="center",
+            live, textvariable=self.status, font=ctk.CTkFont("Segoe UI", FONT_BODY),
+            text_color=BODY, wraplength=300, justify="center",
         ).pack(fill="x", padx=18, pady=(0, 15))
         self.main_button = ctk.CTkButton(
             live, text="Включить автодетект  ·  F9", command=self.toggle,

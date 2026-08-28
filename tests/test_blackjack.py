@@ -317,14 +317,14 @@ class BlackjackInputTests(unittest.TestCase):
 
 class BlackjackCatalogTests(unittest.TestCase):
     def test_ace_replaces_bonus_placeholder(self) -> None:
-        self.assertEqual(CATS[7][0], "Туз")
-        self.assertTrue(CATS[7][2].endswith("10_blackjack_cat.png"))
-        self.assertEqual(CATS[7][4], "Лудоманы")
+        self.assertEqual(CATS[8][0], "Туз")
+        self.assertTrue(CATS[8][2].endswith("10_blackjack_cat.png"))
+        self.assertEqual(CATS[8][4], "Лудоманы")
         self.assertNotIn("Бонус", {cat[0] for cat in COMING_SOON_CATS})
 
     def test_blackjack_recipe_is_registered_for_the_ace(self) -> None:
         recipes = {secret_id: ingredients for secret_id, _title, ingredients in SECRET_RECIPES}
-        self.assertEqual(SECRET_CAT_INDICES["blackjack"], 7)
+        self.assertEqual(SECRET_CAT_INDICES["blackjack"], 8)
         self.assertEqual(recipes["blackjack"], ("sushi", "watermelon", "strawberry"))
 
     def test_every_recipe_stays_unique(self) -> None:

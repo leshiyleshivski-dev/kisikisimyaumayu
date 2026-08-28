@@ -22,7 +22,7 @@ import mss
 import numpy as np
 
 from ...core import (
-    APP_BG, MINT, MUTED, TEXT, VK_F9, VK_F11,
+    APP_BG, BODY, FONT_CAPTION, FONT_NOTE, MINT, MUTED, TEXT, VK_F9, VK_F11,
     client_bounds, data_path, find_game_window, user32, window_title,
 )
 from .journal import (
@@ -685,7 +685,8 @@ class PokerModule(ctk.CTkFrame):
             box = ctk.CTkFrame(table, fg_color="#1D2740", corner_radius=15)
             box.pack(fill="x", padx=16, pady=(0, 9))
             ctk.CTkLabel(
-                box, text=title, font=ctk.CTkFont("Segoe UI", 9, "bold"), text_color=ACCENT,
+                box, text=title, font=ctk.CTkFont("Segoe UI", FONT_CAPTION, "bold"),
+                text_color=ACCENT,
             ).pack(anchor="w", padx=14, pady=(10, 0))
             ctk.CTkLabel(
                 box, textvariable=variable, font=ctk.CTkFont("Consolas", size, "bold"),
@@ -715,21 +716,23 @@ class PokerModule(ctk.CTkFrame):
                 padx=(0 if column == 0 else 6, 0), pady=(0 if row == 0 else 6, 0),
             )
             ctk.CTkLabel(
-                cell, text=title, font=ctk.CTkFont("Segoe UI", 8, "bold"), text_color=MUTED,
+                cell, text=title, font=ctk.CTkFont("Segoe UI", FONT_CAPTION, "bold"),
+                text_color=MUTED,
             ).pack(padx=10, pady=(9, 0))
             ctk.CTkLabel(
                 cell, textvariable=variable, font=ctk.CTkFont("Segoe UI", 15, "bold"),
                 text_color=TEXT,
             ).pack(padx=10, pady=(0, 9))
         ctk.CTkLabel(
-            table, textvariable=self.seat_text, font=ctk.CTkFont("Segoe UI", 9, "bold"),
-            text_color=MUTED,
+            table, textvariable=self.seat_text,
+            font=ctk.CTkFont("Segoe UI", FONT_NOTE, "bold"), text_color=BODY,
         ).pack(anchor="w", padx=18, pady=(0, 2))
         # Строка появляется только в раздачах с олл-ином: считать, какой горшок
         # наш, помощник не умеет, но смолчать об этом было бы нечестно.
         ctk.CTkLabel(
-            table, textvariable=self.pots_text, font=ctk.CTkFont("Segoe UI", 9, "bold"),
-            text_color=MUTED, wraplength=430, justify="left",
+            table, textvariable=self.pots_text,
+            font=ctk.CTkFont("Segoe UI", FONT_NOTE, "bold"), text_color=BODY,
+            wraplength=430, justify="left",
         ).pack(anchor="w", padx=18, pady=(0, 12))
 
 
@@ -795,8 +798,9 @@ class PokerModule(ctk.CTkFrame):
         # об этом обязаны: иначе игрок будет думать, что статистика копится.
         # Развёрнутая же даёт замер по столу — ради него журнал ходы и пишет.
         ctk.CTkLabel(
-            log, textvariable=self.log_text, font=ctk.CTkFont("Segoe UI", 10, "bold"),
-            text_color=MUTED, wraplength=330, justify="left",
+            log, textvariable=self.log_text,
+            font=ctk.CTkFont("Segoe UI", FONT_NOTE, "bold"), text_color=BODY,
+            wraplength=360, justify="left",
         ).pack(anchor="w", padx=18, pady=(0, 12))
 
         guide = panel(side, "КАК ПОЛЬЗОВАТЬСЯ", ACCENT)

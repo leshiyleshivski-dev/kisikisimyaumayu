@@ -32,9 +32,10 @@ import mss
 import numpy as np
 
 from ...core import (
-    APP_BG, MINT, MUTED, SURFACE_ALT, TEXT, VK_F9, VK_F11, client_bounds,
-    cursor_position, find_game_window, glide_cursor_to, process_for_window,
-    resource_path, rounded_photo, send_left_click, user32,
+    APP_BG, BODY, FONT_BODY, FONT_CAPTION, FONT_NOTE, MINT, MUTED, SURFACE_ALT,
+    TEXT, VK_F9, VK_F11, client_bounds, cursor_position, find_game_window,
+    glide_cursor_to, process_for_window, resource_path, rounded_photo,
+    send_left_click, user32,
 )
 from ..ui import connection_panel, hotkey_bar, module_header, panel, step_list
 from .stats import OreTally
@@ -248,12 +249,12 @@ class MinerModule(ctk.CTkFrame):
             text_color=TEXT,
         ).pack(anchor="w", padx=18, pady=(0, 4))
         ctk.CTkLabel(
-            run, textvariable=self.status, font=ctk.CTkFont("Segoe UI", 10),
-            text_color=MUTED, wraplength=360, justify="left",
-        ).pack(anchor="w", padx=18, pady=(0, 6))
+            run, textvariable=self.status, font=ctk.CTkFont("Segoe UI", FONT_BODY),
+            text_color=BODY, wraplength=380, justify="left",
+        ).pack(anchor="w", padx=18, pady=(0, 7))
         ctk.CTkLabel(
-            run, textvariable=self.rhythm, font=ctk.CTkFont("Segoe UI", 9, "bold"),
-            text_color=ACCENT,
+            run, textvariable=self.rhythm,
+            font=ctk.CTkFont("Segoe UI", FONT_NOTE, "bold"), text_color=ACCENT,
         ).pack(anchor="w", padx=18, pady=(0, 16))
 
         steps = panel(left, "КАК РАБОТАТЬ", ACCENT)
@@ -286,12 +287,12 @@ class MinerModule(ctk.CTkFrame):
             self._ore_card(grid, index, key, title)
         ctk.CTkLabel(
             card, textvariable=self.leaders_text,
-            font=ctk.CTkFont("Segoe UI", 10, "bold"), text_color=MINT,
+            font=ctk.CTkFont("Segoe UI", FONT_BODY, "bold"), text_color=MINT,
         ).pack(anchor="w", padx=18, pady=(6, 0))
         ctk.CTkLabel(
             card, textvariable=self.unknown_text,
-            font=ctk.CTkFont("Segoe UI", 9), text_color=MUTED,
-        ).pack(anchor="w", padx=18, pady=(2, 14))
+            font=ctk.CTkFont("Segoe UI", FONT_NOTE), text_color=BODY,
+        ).pack(anchor="w", padx=18, pady=(3, 14))
 
     @staticmethod
     def _total_card(
@@ -301,7 +302,7 @@ class MinerModule(ctk.CTkFrame):
         card = ctk.CTkFrame(parent, fg_color="transparent")
         card.grid(row=0, column=column, padx=16, pady=11, sticky="ew")
         ctk.CTkLabel(
-            card, text=title, font=ctk.CTkFont("Segoe UI", 10, "bold"),
+            card, text=title, font=ctk.CTkFont("Segoe UI", FONT_CAPTION, "bold"),
             text_color=MUTED,
         ).pack()
         ctk.CTkLabel(
@@ -322,12 +323,12 @@ class MinerModule(ctk.CTkFrame):
         copy = ctk.CTkFrame(row, fg_color="transparent")
         copy.pack(side="left", fill="x", expand=True)
         ctk.CTkLabel(
-            copy, text=title, font=ctk.CTkFont("Segoe UI", 9, "bold"),
+            copy, text=title, font=ctk.CTkFont("Segoe UI", FONT_NOTE, "bold"),
             text_color=TEXT,
         ).pack(anchor="w")
         ctk.CTkLabel(
             copy, textvariable=self.ore_text[key],
-            font=ctk.CTkFont("Segoe UI", 11, "bold"), text_color=MUTED,
+            font=ctk.CTkFont("Segoe UI", FONT_BODY, "bold"), text_color=BODY,
         ).pack(anchor="w")
 
     def ore_icon(self, index: int, key: str):

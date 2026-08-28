@@ -11,7 +11,7 @@ import mss
 import numpy as np
 
 from ..core import (
-    APP_BG, GOLD, MINT, MUTED, SURFACE_ALT, TEXT, VK_F, VK_F9, VK_F11,
+    APP_BG, BODY, FONT_BODY, FONT_CAPTION, FONT_NOTE, GOLD, MINT, SURFACE_ALT, TEXT, VK_F, VK_F9, VK_F11,
     activate_window, client_bounds, cursor_position, find_game_window,
     glide_cursor_to, resource_path, send_key_tap, send_left_click, user32,
     window_title,
@@ -318,8 +318,8 @@ class RaceBettorModule(ctk.CTkFrame):
         goal = ctk.CTkFrame(live, fg_color="#302A1C", corner_radius=17)
         goal.pack(fill="x", padx=16, pady=(0, 13))
         ctk.CTkLabel(
-            goal, text="ОСТАНОВИТЬСЯ ПОСЛЕ", font=ctk.CTkFont("Segoe UI", 9, "bold"),
-            text_color=GOLD,
+            goal, text="ОСТАНОВИТЬСЯ ПОСЛЕ",
+            font=ctk.CTkFont("Segoe UI", FONT_CAPTION, "bold"), text_color=GOLD,
         ).pack(side="left", padx=(18, 10), pady=18)
         self.target_entry = ctk.CTkEntry(
             goal, textvariable=self.target_input, width=72, height=36,
@@ -328,24 +328,24 @@ class RaceBettorModule(ctk.CTkFrame):
         )
         self.target_entry.pack(side="left", pady=11)
         ctk.CTkLabel(
-            goal, text="ПОБЕД", font=ctk.CTkFont("Segoe UI", 9, "bold"),
-            text_color=GOLD,
+            goal, text="ПОБЕД",
+            font=ctk.CTkFont("Segoe UI", FONT_CAPTION, "bold"), text_color=GOLD,
         ).pack(side="left", padx=10, pady=18)
         ctk.CTkLabel(
             live, textvariable=self.progress, font=ctk.CTkFont("Segoe UI", 25, "bold"),
             text_color=TEXT,
         ).pack(padx=18, pady=(3, 2))
         ctk.CTkLabel(
-            live, textvariable=self.stats, font=ctk.CTkFont("Segoe UI", 10, "bold"),
-            text_color=accent,
+            live, textvariable=self.stats,
+            font=ctk.CTkFont("Segoe UI", FONT_NOTE, "bold"), text_color=accent,
         ).pack(padx=18, pady=(0, 7))
         ctk.CTkLabel(
             live, textvariable=self.timer, font=ctk.CTkFont("Segoe UI", 14, "bold"),
             text_color=TEXT,
         ).pack(fill="x", padx=20, pady=(5, 4))
         ctk.CTkLabel(
-            live, textvariable=self.status, font=ctk.CTkFont("Segoe UI", 9),
-            text_color=MUTED, wraplength=410, justify="center",
+            live, textvariable=self.status, font=ctk.CTkFont("Segoe UI", FONT_BODY),
+            text_color=BODY, wraplength=410, justify="center",
         ).pack(fill="x", padx=24, pady=(0, 14))
         self.main_button = ctk.CTkButton(
             live, text="Запустить автоставки  ·  F9", command=self.toggle,
@@ -367,8 +367,8 @@ class RaceBettorModule(ctk.CTkFrame):
         ctk.CTkLabel(
             note,
             text="Всегда выбирается найденная строка 2/1. Размер ставки не изменяется.",
-            font=ctk.CTkFont("Segoe UI", 8, "bold"), text_color=GOLD,
-            wraplength=315, justify="left",
+            font=ctk.CTkFont("Segoe UI", FONT_BODY, "bold"), text_color=GOLD,
+            wraplength=365, justify="left",
         ).pack(anchor="w", padx=12, pady=10)
         hotkey_bar(body, (("F9", "старт / стоп"), ("F11", "аварийная остановка")), accent)
 

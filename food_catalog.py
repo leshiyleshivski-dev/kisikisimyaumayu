@@ -38,9 +38,8 @@ SECRET_RECIPES = (
     ("phone", "PHONE BEAT", ("milk", "sausage", "cat_treat")),
     ("builder", "BRICK TIMING", ("chicken", "carrot", "pumpkin")),
     ("volt", "VOLT GRID", ("cheese", "shrimp", "mystery_meal")),
-    # У ORE HUNT экрана сейчас нет: логику шахтёра сняли, а котик и рецепт
-    # остались. Кормилка на такой рецепт отвечает словами, а не модулем.
     ("miner", "ORE HUNT", ("kibble", "burger", "milk")),
+    ("lumberjack", "TIMBER CUT", ("pumpkin", "salmon", "cheese")),
     ("race_bettor", "RACE BETTOR", ("carrot", "cat_treat", "fish")),
     ("slot_spinner", "SLOT SPINNER", ("pizza", "donut", "ice_cream")),
     ("blackjack", "BLACKJACK RUN", ("sushi", "watermelon", "strawberry")),
@@ -54,8 +53,9 @@ SECRET_CAT_INDICES = {
     "builder": 2,   # Кирпич
     "volt": 3,      # Вольт
     "miner": 4,     # Кварц
-    "race_bettor": 5,  # Фаворит
-    "slot_spinner": 6,  # Семёрка
-    "blackjack": 7,  # Туз
-    "poker": 8,  # Блеф
+    "lumberjack": 5,  # Сучок
+    "race_bettor": 6,  # Фаворит
+    "slot_spinner": 7,  # Семёрка
+    "blackjack": 8,  # Туз
+    "poker": 9,  # Блеф
 }

@@ -13,10 +13,10 @@ import mss
 import numpy as np
 
 from ..core import (
-    APP_BG, BET_DELAY_SECONDS, BLACK_DIAMOND_RATIO,
+    APP_BG, BET_DELAY_SECONDS, BLACK_DIAMOND_RATIO, BODY, FONT_BODY, FONT_NOTE,
     GAME_CURSOR_DISTANCE_MULTIPLIER, GAME_RECONNECT_SECONDS,
     GAME_ROUND_SECONDS, GOLD, MINT, MISSING_TIMER_SHUTDOWN_SECONDS,
-    MUTED, RED_DIAMOND_RATIO, SURFACE, SURFACE_ALT, TEXT,
+    RED_DIAMOND_RATIO, SURFACE, SURFACE_ALT, TEXT,
     TIMER_ACTIVATE_SETTLE_SECONDS, TIMER_SCAN_INTERVAL_SECONDS,
     TIME_READOUT_RATIO, VK_F4, VK_F9, VK_F11, activate_window,
     client_bounds, confine_cursor_to_client, cursor_position,
@@ -74,8 +74,8 @@ class RouletteModule(ctk.CTkFrame):
             accent=accent, on_back=self.back,
         )
         self.alert_sound_button = ctk.CTkButton(
-            actions, command=self.toggle_alert_sound, width=134, height=38,
-            corner_radius=12, font=ctk.CTkFont("Segoe UI", 9, "bold"),
+            actions, command=self.toggle_alert_sound, width=142, height=40,
+            corner_radius=12, font=ctk.CTkFont("Segoe UI", FONT_NOTE, "bold"),
         )
         self.alert_sound_button.pack(side="right", padx=(0, 8))
         self.refresh_alert_sound_button()
@@ -102,9 +102,9 @@ class RouletteModule(ctk.CTkFrame):
             text_color=accent,
         ).pack(pady=(16, 3))
         self.point_badge = ctk.CTkLabel(
-            wheel, textvariable=self.point_status, height=26, corner_radius=8,
-            fg_color="#352936", font=ctk.CTkFont("Segoe UI", 9, "bold"),
-            text_color="#D8A3AE",
+            wheel, textvariable=self.point_status, height=28, corner_radius=8,
+            fg_color="#352936", font=ctk.CTkFont("Segoe UI", FONT_NOTE, "bold"),
+            text_color="#E4B8C2",
         )
         self.point_badge.pack(pady=(0, 15))
         ctk.CTkLabel(
@@ -112,8 +112,8 @@ class RouletteModule(ctk.CTkFrame):
             text_color=TEXT,
         ).pack(padx=18, pady=(7, 4))
         ctk.CTkLabel(
-            live, textvariable=self.status, font=ctk.CTkFont("Segoe UI", 10),
-            text_color=MUTED, wraplength=410, justify="center",
+            live, textvariable=self.status, font=ctk.CTkFont("Segoe UI", FONT_BODY),
+            text_color=BODY, wraplength=410, justify="center",
         ).pack(fill="x", padx=24, pady=(0, 16))
         self.main_button = ctk.CTkButton(
             live, text="Запустить  ·  F9", command=self.toggle,
@@ -134,8 +134,8 @@ class RouletteModule(ctk.CTkFrame):
         ctk.CTkLabel(
             warning,
             text="🔔 Сигнал за 10 сек.  ·  Интервал 7–9 мин.\n⚠ Потеря строки «ВРЕМЯ» остановит приложение.",
-            font=ctk.CTkFont("Segoe UI", 8, "bold"), text_color=GOLD,
-            justify="left", wraplength=320,
+            font=ctk.CTkFont("Segoe UI", FONT_BODY, "bold"), text_color=GOLD,
+            justify="left", wraplength=365,
         ).pack(anchor="w", padx=12, pady=10)
         hotkey_bar(body, (("F4", "точка ставки"), ("F9", "старт / стоп"), ("F11", "аварийный стоп")), accent)
 

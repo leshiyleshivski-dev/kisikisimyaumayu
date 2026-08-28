@@ -146,13 +146,13 @@ class RaceHorseVisionTests(unittest.TestCase):
 
 class RaceBettorCatalogTests(unittest.TestCase):
     def test_favorite_replaces_jackpot_placeholder(self) -> None:
-        self.assertEqual(CATS[5][0], "Фаворит")
-        self.assertTrue(CATS[5][2].endswith("07_race_bettor_cat.png"))
+        self.assertEqual(CATS[6][0], "Фаворит")
+        self.assertTrue(CATS[6][2].endswith("07_race_bettor_cat.png"))
         self.assertNotIn("Джекпот", {cat[0] for cat in COMING_SOON_CATS})
 
     def test_favorite_recipe_is_registered(self) -> None:
         recipes = {secret_id: ingredients for secret_id, _title, ingredients in SECRET_RECIPES}
-        self.assertEqual(SECRET_CAT_INDICES["race_bettor"], 5)
+        self.assertEqual(SECRET_CAT_INDICES["race_bettor"], 6)
         self.assertEqual(recipes["race_bettor"], ("carrot", "cat_treat", "fish"))
 
     def test_win_target_means_wins_not_attempts(self) -> None:

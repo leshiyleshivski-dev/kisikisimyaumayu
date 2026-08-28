@@ -8,7 +8,7 @@ import time
 import customtkinter as ctk
 
 from ..core import (
-    APP_BG, GOLD, MINT, MUTED, SURFACE, SURFACE_ALT, TEXT,
+    APP_BG, BODY, FONT_BODY, GOLD, MINT, SURFACE, SURFACE_ALT, TEXT,
     VK_F9, VK_F11, VK_UP, activate_window, find_game_window,
     send_key_tap, user32, window_title,
 )
@@ -69,15 +69,15 @@ class PhoneModule(ctk.CTkFrame):
         ).pack(pady=(18, 4))
         ctk.CTkLabel(
             beat, text="пара ударов повторяется каждые 7–9 минут",
-            font=ctk.CTkFont("Segoe UI", 9), text_color=MUTED,
+            font=ctk.CTkFont("Segoe UI", FONT_BODY), text_color=BODY,
         ).pack(pady=(0, 17))
         ctk.CTkLabel(
             live, textvariable=self.timer, font=ctk.CTkFont("Segoe UI", 21, "bold"),
             text_color=TEXT,
         ).pack(padx=18, pady=(5, 4))
         ctk.CTkLabel(
-            live, textvariable=self.status, font=ctk.CTkFont("Segoe UI", 10),
-            text_color=MUTED, wraplength=410, justify="center",
+            live, textvariable=self.status, font=ctk.CTkFont("Segoe UI", FONT_BODY),
+            text_color=BODY, wraplength=410, justify="center",
         ).pack(fill="x", padx=24, pady=(0, 16))
         self.main_button = ctk.CTkButton(
             live, text="Запустить ритм  ·  F9", command=self.toggle,
@@ -96,7 +96,7 @@ class PhoneModule(ctk.CTkFrame):
         step_list(guide, steps, accent)
         ctk.CTkLabel(
             guide, text="После пары окно вернётся автоматически.",
-            font=ctk.CTkFont("Segoe UI", 9, "bold"), text_color=GOLD,
+            font=ctk.CTkFont("Segoe UI", FONT_BODY, "bold"), text_color=GOLD,
         ).pack(anchor="w", padx=18, pady=(4, 14))
         hotkey_bar(body, (("F9", "старт / стоп"), ("F11", "экстренная остановка")), accent)
 

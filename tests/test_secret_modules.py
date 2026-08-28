@@ -18,7 +18,7 @@ class QuartzTests(unittest.TestCase):
     def test_the_cat_keeps_its_place_and_picture(self) -> None:
         name, _description, filename, _color, category = CATS[4]
         self.assertEqual(name, "Кварц")
-        self.assertEqual(category, "Шахтёр")
+        self.assertEqual(category, "Добывающие котики")
         self.assertTrue(resource_path(filename).exists(), filename)
 
     def test_the_recipe_survived_the_module(self) -> None:

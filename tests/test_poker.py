@@ -63,14 +63,14 @@ def verdict(memory: HandMemory, state) -> str | None:
 
 class PokerCatalogTests(unittest.TestCase):
     def test_bluff_replaces_the_placeholder(self) -> None:
-        self.assertEqual(CATS[8][0], "Блеф")
-        self.assertTrue(CATS[8][2].endswith("11_poker_cat.png"))
-        self.assertEqual(CATS[8][4], "Лудоманы")
+        self.assertEqual(CATS[9][0], "Блеф")
+        self.assertTrue(CATS[9][2].endswith("11_poker_cat.png"))
+        self.assertEqual(CATS[9][4], "Лудоманы")
         self.assertNotIn("Занос", {cat[0] for cat in COMING_SOON_CATS})
 
     def test_poker_recipe_is_registered_for_the_bluff(self) -> None:
         recipes = {secret_id: ingredients for secret_id, _title, ingredients in SECRET_RECIPES}
-        self.assertEqual(SECRET_CAT_INDICES["poker"], 8)
+        self.assertEqual(SECRET_CAT_INDICES["poker"], 9)
         self.assertEqual(recipes["poker"], ("tuna_can", "donut", "mystery_meal"))
 
     def test_recipe_uses_only_known_food(self) -> None:

@@ -10,7 +10,7 @@ import mss
 import numpy as np
 
 from ..core import (
-    APP_BG, MINT, MUTED, SURFACE, SURFACE_ALT, TEXT, TIMING_BAR_RATIO,
+    APP_BG, BODY, FONT_BODY, FONT_CAPTION, MINT, SURFACE, SURFACE_ALT, TEXT, TIMING_BAR_RATIO,
     VK_F9, VK_F11, VK_SPACE, activate_window, client_bounds,
     find_game_window, send_key_tap, user32, window_title,
 )
@@ -79,15 +79,15 @@ class BuilderModule(ctk.CTkFrame):
         ctk.CTkLabel(scale, text="◆", width=22, font=ctk.CTkFont("Segoe UI Symbol", 15, "bold"), text_color="#FF8F91").place(relx=0.43, rely=0.5, anchor="center")
         ctk.CTkLabel(
             timing, text="РОЗОВЫЙ БЕГУНОК  →  ЗЕЛЁНАЯ ЗОНА",
-            font=ctk.CTkFont("Segoe UI", 8, "bold"), text_color=accent,
+            font=ctk.CTkFont("Segoe UI", FONT_CAPTION, "bold"), text_color=accent,
         ).pack(pady=(0, 18))
         ctk.CTkLabel(
             live, textvariable=self.target, font=ctk.CTkFont("Segoe UI", 20, "bold"),
             text_color=TEXT,
         ).pack(padx=18, pady=(5, 4))
         ctk.CTkLabel(
-            live, textvariable=self.status, font=ctk.CTkFont("Segoe UI", 10),
-            text_color=MUTED, wraplength=410, justify="center",
+            live, textvariable=self.status, font=ctk.CTkFont("Segoe UI", FONT_BODY),
+            text_color=BODY, wraplength=410, justify="center",
         ).pack(fill="x", padx=24, pady=(0, 16))
         self.main_button = ctk.CTkButton(
             live, text="Запустить ловлю  ·  F9", command=self.toggle,
@@ -105,8 +105,8 @@ class BuilderModule(ctk.CTkFrame):
         ), accent)
         ctk.CTkLabel(
             guide, text="Одно подтверждённое пересечение — одно нажатие Space.",
-            font=ctk.CTkFont("Segoe UI", 8, "bold"), text_color=accent,
-            wraplength=330, justify="left",
+            font=ctk.CTkFont("Segoe UI", FONT_BODY, "bold"), text_color=accent,
+            wraplength=320, justify="left",
         ).pack(anchor="w", padx=18, pady=(4, 14))
         hotkey_bar(body, (("F9", "старт / стоп"), ("F11", "экстренная остановка")), accent)
 

@@ -11,7 +11,7 @@ import mss
 import numpy as np
 
 from ..core import (
-    APP_BG, GOLD, MINT, MUTED, SURFACE_ALT, TEXT,
+    APP_BG, BODY, FONT_BODY, FONT_CAPTION, FONT_NOTE, GOLD, MINT, SURFACE_ALT, TEXT,
     VK_F, VK_F9, VK_F11,
     activate_window, client_bounds, find_game_window, send_key_tap,
     user32, window_title,
@@ -190,8 +190,8 @@ class SlotSpinnerModule(ctk.CTkFrame):
         target_box = ctk.CTkFrame(settings, fg_color="transparent")
         target_box.grid(row=0, column=0, padx=14, pady=11, sticky="ew")
         ctk.CTkLabel(
-            target_box, text="ОСТАНОВИТЬСЯ ПОСЛЕ", font=ctk.CTkFont("Segoe UI", 9, "bold"),
-            text_color=accent,
+            target_box, text="ОСТАНОВИТЬСЯ ПОСЛЕ",
+            font=ctk.CTkFont("Segoe UI", FONT_CAPTION, "bold"), text_color=accent,
         ).pack(anchor="w")
         self.target_entry = ctk.CTkEntry(
             target_box, textvariable=self.target_input, height=36, justify="center",
@@ -205,16 +205,16 @@ class SlotSpinnerModule(ctk.CTkFrame):
             text_color=TEXT,
         ).pack(padx=18, pady=(3, 2))
         ctk.CTkLabel(
-            live, textvariable=self.stats, font=ctk.CTkFont("Segoe UI", 10, "bold"),
-            text_color=accent,
+            live, textvariable=self.stats,
+            font=ctk.CTkFont("Segoe UI", FONT_NOTE, "bold"), text_color=accent,
         ).pack(padx=18, pady=(0, 7))
         ctk.CTkLabel(
             live, textvariable=self.timer, font=ctk.CTkFont("Segoe UI", 14, "bold"),
             text_color=TEXT,
         ).pack(fill="x", padx=20, pady=(5, 4))
         ctk.CTkLabel(
-            live, textvariable=self.status, font=ctk.CTkFont("Segoe UI", 9),
-            text_color=MUTED, wraplength=410, justify="center",
+            live, textvariable=self.status, font=ctk.CTkFont("Segoe UI", FONT_BODY),
+            text_color=BODY, wraplength=410, justify="center",
         ).pack(fill="x", padx=24, pady=(0, 14))
         self.main_button = ctk.CTkButton(
             live, text="Запустить вращения  ·  F9", command=self.toggle,
@@ -236,8 +236,8 @@ class SlotSpinnerModule(ctk.CTkFrame):
         ctk.CTkLabel(
             note,
             text="Если интерфейс слота пропал, модуль остановится и не станет нажимать F вслепую.",
-            font=ctk.CTkFont("Segoe UI", 8, "bold"), text_color=GOLD,
-            wraplength=315, justify="left",
+            font=ctk.CTkFont("Segoe UI", FONT_BODY, "bold"), text_color=GOLD,
+            wraplength=365, justify="left",
         ).pack(anchor="w", padx=12, pady=10)
         hotkey_bar(body, (("F9", "старт / стоп"), ("F11", "аварийная остановка")), accent)
 

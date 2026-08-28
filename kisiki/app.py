@@ -6,6 +6,7 @@ import json
 import random
 import time
 import tkinter as tk
+from tkinter import font as tkfont
 from datetime import date
 from pathlib import Path
 
@@ -16,7 +17,8 @@ from food_catalog import FOOD_CATALOG, FOOD_NAMES, SECRET_CAT_INDICES, SECRET_RE
 from secret_modules import SecretModuleManager
 
 from .core import (
-    APP_BG, CATS, CAT_CATEGORIES, COMING_SOON_CATS, GOLD, MINT, MUTED, PINK, PURPLE,
+    APP_BG, CATS, CAT_CATEGORIES, COMING_SOON_CATS, FONT_BODY, FONT_CAPTION,
+    FONT_LEAD, FONT_NOTE, GOLD, MINT, MUTED, PINK, PURPLE,
     SURFACE, SURFACE_ALT, SURFACE_HOVER, TEXT,
     cat_sound, make_dpi_aware, progress_path, release_source_images,
     resource_path, rounded_photo, winmm,
@@ -29,7 +31,8 @@ from .clicker import (
     today_key, upgrade_price as cat_upgrade_price,
 )
 from .modules import (
-    BlackjackModule, BuilderModule, ElectricianModule, MinerModule, PhoneModule,
+    BlackjackModule, BuilderModule, ElectricianModule, LumberjackModule,
+    MinerModule, PhoneModule,
     PokerModule, RaceBettorModule, RouletteModule, SlotSpinnerModule,
     fresh_daily_stats,
 )
@@ -43,6 +46,9 @@ SURFACE_ALT = "#222C3C"
 SURFACE_HOVER = "#2B374A"
 TEXT = "#F5F7FB"
 MUTED = "#98A5B8"
+# MUTED годится подписи в одну строку, но не абзацу: на тёмной карточке текст
+# им сливается с фоном. Размеры шрифта общие с модулями и живут в core.py.
+BODY = "#C8D3E4"
 GOLD = "#F2C66D"
 MINT = "#68D6B4"
 PINK = "#FF8F91"
@@ -54,13 +60,20 @@ CAT_IMAGE_SIZES = ((125, 98), (320, 255), (54, 44), (64, 64))
 FOOD_IMAGE_SIZES = ((38, 38), (48, 48))
 
 class KisikiApp(ctk.CTk):
+    # Полосу категории считаем по самому узкому окну: на 1040 px «ДОБЫВАЮЩИЕ
+    # КОТИКИ» ещё помещались бы, а на 960 обрезались бы до «ОБЫВАЮЩИЕ КОТИК» —
+    # и это читается как опечатка, а не как узкое окно.
+    MIN_WIDTH = 960
+    CAT_GRID_PADDING = 36
+    CAT_CELL_PADDING = 12
+
     def __init__(self) -> None:
         super().__init__()
         make_dpi_aware()
         ctk.set_appearance_mode("dark")
         self.title("Кисикисимяумяу")
         self.geometry("1040x860")
-        self.minsize(960, 800)
+        self.minsize(self.MIN_WIDTH, 800)
         self.configure(fg_color=APP_BG)
         self.closing = False
         self.protocol("WM_DELETE_WINDOW", self.close_app)
@@ -80,7 +93,11 @@ class KisikiApp(ctk.CTk):
         self.combo_reset_job: str | None = None
         self.recipe_title_taps = 0
         self.recipe_title_deadline = 0.0
+        # Книга рецептов открывается на той же полке, что и в прошлый раз:
+        # None — все рецепты, иначе название категории котиков.
+        self.recipe_filter: str | None = None
         self.gift_ready_at = time.monotonic()
+        self.caption_fonts: dict[int, tkfont.Font] = {}
         self.images: dict[tuple[int, int, int], tk.PhotoImage] = {}
         self.food_images: dict[tuple[str, int, int], tk.PhotoImage] = {}
         self.click_effects: list[ctk.CTkLabel] = []
@@ -110,6 +127,9 @@ class KisikiApp(ctk.CTk):
                 daily_stats=self.game["miner_stats"],
                 on_stats_change=self.save_game,
             ),
+        )
+        self.secret_modules.register(
+            "lumberjack", lambda: LumberjackModule(self.content, self.show_clicker)
         )
         self.secret_modules.register(
             "race_bettor", lambda: RaceBettorModule(self.content, self.show_clicker)
@@ -154,8 +174,30 @@ class KisikiApp(ctk.CTk):
             "miner_stats": fresh_daily_stats(),
             "last_seen": time.time(),
             "cats": [fresh_cat() for _ in CATS],
-            "cat_roster_version": 2,
+            "cat_roster_version": 3,
         }
+
+    @staticmethod
+    def cat_migration(saved_count: int, roster_version: int) -> tuple[int, ...]:
+        """Откуда каждому нынешнему котику брать прогресс из старого файла.
+
+        Новый котик не всегда приезжает в конец списка: Сучок встал сразу за
+        Кварцем, потому что рядом с ним ему и место на главном экране. Но
+        индекс в файле — это позиция, и вставка в середину сдвигает всё, что
+        за ней: без этой карты прогресс Фаворита достался бы Сучку, а Блефа —
+        Тузу. Поэтому набор котиков и пронумерован ``cat_roster_version``.
+
+        Позиция ``-1`` означает, что котику в старом файле соответствия нет и
+        он начинает с нуля.
+        """
+        if saved_count == 6 and roster_version < 2:
+            # Шесть мем-котов: у будущих Крупье, Звонка, Кирпича и Вольта
+            # прогресс есть, у остальных его не было вовсе.
+            return (5, 1, 3, 4)
+        if roster_version < 3 and saved_count >= 9:
+            # Девять котиков до Сучка: он вставлен пятым, дальше всё сдвинуто.
+            return (0, 1, 2, 3, 4, -1, 5, 6, 7, 8)
+        return tuple(range(len(CATS)))
 
     def load_game(self) -> dict:
         game = self.fresh_game()
@@ -186,12 +228,11 @@ class KisikiApp(ctk.CTk):
                     game["miner_stats"] = dict(saved["miner_stats"])
                 game["last_seen"] = float(saved.get("last_seen", time.time()))
                 saved_cats = saved["cats"]
-                # Миграция от старого набора из шести мем-котов: сохраняем
-                # прогресс будущих Крупье, Звонка, Строителя и Электрика.
-                legacy_six = len(saved_cats) == 6 and int(saved.get("cat_roster_version", 0)) < 2
-                source_indices = (5, 1, 3, 4) if legacy_six else range(len(CATS))
+                source_indices = self.cat_migration(
+                    len(saved_cats), int(saved.get("cat_roster_version", 0)),
+                )
                 for index, source_index in enumerate(source_indices):
-                    if index >= len(CATS) or source_index >= len(saved_cats):
+                    if index >= len(CATS) or not 0 <= source_index < len(saved_cats):
                         continue
                     data = saved_cats[source_index]
                     if isinstance(data, dict):
@@ -290,6 +331,30 @@ class KisikiApp(ctk.CTk):
         except tk.TclError:
             # Для запуска исходника остаётся рабочий вариант через PNG.
             self.iconphoto(True, self.photo(2, 64, 64))
+
+    def caption_font(self, size: int) -> tkfont.Font:
+        if size not in self.caption_fonts:
+            self.caption_fonts[size] = tkfont.Font(family="Segoe UI", size=size, weight="bold")
+        return self.caption_fonts[size]
+
+    def category_caption(
+        self, icon: str, category: str, count: int | None, columns: int, column_width: float,
+    ) -> tuple[str, int]:
+        """Самая подробная подпись полосы, которая влезает в её ширину.
+
+        Категория из двух котиков попадает на перенос строки, и её полоса
+        сжимается до одной колонки. Подпись сдаёт сначала счёт, потом значок,
+        потом кегль — обрезать название нельзя, оно и есть смысл полосы.
+        """
+        available = columns * column_width - self.CAT_CELL_PADDING
+        variants = [f"{icon}  {category.upper()}", category.upper()]
+        if count is not None:
+            variants.insert(0, f"{icon}  {category.upper()}  ·  {count}")
+        for size in (FONT_CAPTION, FONT_CAPTION - 1, FONT_CAPTION - 2):
+            for caption in variants:
+                if self.caption_font(size).measure(caption) <= available:
+                    return caption, size
+        return category.upper(), FONT_CAPTION - 2
 
     def photo(self, index: int, width: int, height: int) -> tk.PhotoImage:
         key = (index, width, height)
@@ -414,52 +479,154 @@ class KisikiApp(ctk.CTk):
             self.recipe_title_deadline = 0.0
             self.after(0, self.show_recipes)
 
+    # Рецептов десять, и списком в одну колонку книга уезжала под экран: до
+    # покера приходилось крутить. Три колонки укладывают её в четыре ряда, а
+    # полки по категориям котиков режут её до одного-двух рядов.
+    RECIPE_COLUMNS = 3
+    RECIPE_PADDING = 46
+    SHELF_PADDING = 20
+    SHELF_GAP = 6
+
     def show_recipes(self) -> None:
-        """Временный экран рецептов; срабатывание от еды подключим позже."""
+        """Книга рецептов: полки по категориям котиков и сетка карточек."""
         back = self.show_clicker if self.current_view == "clicker" else self.show_home
         self.clear()
         self.current_view = "recipes"
         self.header("скрытая книга кормления", back)
+
         intro = ctk.CTkFrame(self.content, fg_color=SURFACE, corner_radius=24, border_width=1, border_color="#303B50")
-        intro.pack(fill="x", padx=46, pady=(0, 20))
-        ctk.CTkLabel(intro, text="РЕЦЕПТЫ НАЙДЕНЫ", font=ctk.CTkFont("Segoe UI", 18, "bold"), text_color=GOLD).pack(anchor="w", padx=24, pady=(18, 3))
+        intro.pack(fill="x", padx=self.RECIPE_PADDING, pady=(0, 14))
+        headline = ctk.CTkFrame(intro, fg_color="transparent")
+        headline.pack(fill="x", padx=24, pady=(16, 4))
+        ctk.CTkLabel(
+            headline, text="КНИГА РЕЦЕПТОВ", font=ctk.CTkFont("Segoe UI", 18, "bold"),
+            text_color=GOLD,
+        ).pack(side="left")
+        ctk.CTkLabel(
+            headline, text=f"{len(SECRET_RECIPES)} рецептов  ·  по одному на котика",
+            font=ctk.CTkFont("Segoe UI", FONT_NOTE, "bold"), text_color=MUTED,
+        ).pack(side="right")
         ctk.CTkLabel(
             intro, text="Накорми нужного котика блюдами в указанном порядке.",
-            font=ctk.CTkFont("Segoe UI", 12), text_color=MUTED,
-        ).pack(anchor="w", padx=24, pady=(0, 18))
-        recipes = ctk.CTkScrollableFrame(
-            self.content, fg_color="transparent", corner_radius=0,
-            scrollbar_button_color="#34445C", scrollbar_button_hover_color=GOLD,
-        )
-        recipes.pack(fill="both", expand=True, padx=46, pady=(0, 24))
-        for secret_id, module_title, ingredients in SECRET_RECIPES:
+            font=ctk.CTkFont("Segoe UI", FONT_BODY), text_color=BODY,
+        ).pack(anchor="w", padx=24, pady=(0, 12))
+
+        shelves = ctk.CTkFrame(intro, fg_color="transparent")
+        shelves.pack(fill="x", padx=self.SHELF_PADDING, pady=(0, 16))
+        self.recipe_shelf_buttons = {}
+        # Шесть полок в одну строку не помещаются на узком окне — последняя
+        # обрезалась до «эманы». Ширину кнопки берём по подписи и переносим
+        # ряд, когда следующая не влезает: полок станет больше, разметка
+        # переживёт это сама.
+        available = self.MIN_WIDTH - 2 * self.RECIPE_PADDING - 2 * self.SHELF_PADDING
+        row = ctk.CTkFrame(shelves, fg_color="transparent")
+        row.pack(fill="x")
+        used = 0
+        for shelf, title in self.recipe_shelves():
+            width = self.caption_font(FONT_NOTE).measure(title) + 30
+            if used and used + width > available:
+                row = ctk.CTkFrame(shelves, fg_color="transparent")
+                row.pack(fill="x", pady=(6, 0))
+                used = 0
+            button = ctk.CTkButton(
+                row, text=title, width=width, height=32, corner_radius=11,
+                command=lambda chosen=shelf: self.choose_recipe_shelf(chosen),
+                font=ctk.CTkFont("Segoe UI", FONT_NOTE, "bold"),
+            )
+            button.pack(side="left", padx=(0, self.SHELF_GAP))
+            self.recipe_shelf_buttons[shelf] = button
+            used += width + self.SHELF_GAP
+
+        self.recipe_grid = ctk.CTkFrame(self.content, fg_color="transparent")
+        self.recipe_grid.pack(fill="both", expand=True, padx=42, pady=(0, 22))
+        for column in range(self.RECIPE_COLUMNS):
+            self.recipe_grid.grid_columnconfigure(column, weight=1, uniform="recipe")
+        self.refresh_recipe_shelves()
+
+    def recipe_shelves(self) -> list[tuple[str | None, str]]:
+        """Полки книги: «Все» и категории котиков, у которых есть рецепт.
+
+        Порядок берётся из ``CAT_CATEGORIES``, чтобы полки стояли так же, как
+        карточки на главном экране, а не в порядке словаря.
+        """
+        with_recipes = {CATS[index][4] for index in SECRET_CAT_INDICES.values()}
+        shelves: list[tuple[str | None, str]] = [(None, f"Все  ·  {len(SECRET_RECIPES)}")]
+        for category in CAT_CATEGORIES:
+            if category not in with_recipes:
+                continue
+            count = sum(
+                1 for index in SECRET_CAT_INDICES.values() if CATS[index][4] == category
+            )
+            shelves.append((category, f"{category}  ·  {count}"))
+        return shelves
+
+    def choose_recipe_shelf(self, shelf: str | None) -> None:
+        """Повторный клик по выбранной полке возвращает всю книгу."""
+        self.recipe_filter = None if shelf == self.recipe_filter else shelf
+        self.refresh_recipe_shelves()
+
+    def refresh_recipe_shelves(self) -> None:
+        for shelf, button in self.recipe_shelf_buttons.items():
+            active = shelf == self.recipe_filter
+            button.configure(
+                fg_color=GOLD if active else "#252D3C",
+                hover_color="#F7D68C" if active else "#334158",
+                text_color="#151A23" if active else TEXT,
+            )
+        self.render_recipe_cards()
+
+    def render_recipe_cards(self) -> None:
+        for child in self.recipe_grid.winfo_children():
+            child.destroy()
+        shown = [
+            recipe for recipe in SECRET_RECIPES
+            if self.recipe_filter is None
+            or CATS[SECRET_CAT_INDICES[recipe[0]]][4] == self.recipe_filter
+        ]
+        for position, (secret_id, module_title, ingredients) in enumerate(shown):
             cat_index = SECRET_CAT_INDICES[secret_id]
             cat_name, _description, _filename, cat_color, _category = CATS[cat_index]
-            card = ctk.CTkFrame(recipes, fg_color=SURFACE, corner_radius=21, border_width=1, border_color="#303B50")
-            card.pack(fill="x", pady=(0, 12))
+            card = ctk.CTkFrame(
+                self.recipe_grid, fg_color=SURFACE, corner_radius=21,
+                border_width=1, border_color="#303B50",
+            )
+            card.grid(
+                row=position // self.RECIPE_COLUMNS,
+                column=position % self.RECIPE_COLUMNS,
+                padx=5, pady=(0, 10), sticky="nsew",
+            )
             top = ctk.CTkFrame(card, fg_color="transparent")
-            top.pack(fill="x", padx=22, pady=(17, 9))
-            ctk.CTkLabel(top, text="", image=self.photo(cat_index, 54, 44)).pack(side="left", padx=(0, 10))
+            top.pack(fill="x", padx=16, pady=(14, 8))
+            ctk.CTkLabel(top, text="", image=self.photo(cat_index, 54, 44)).pack(side="left", padx=(0, 9))
             copy = ctk.CTkFrame(top, fg_color="transparent")
-            copy.pack(side="left")
-            ctk.CTkLabel(copy, text=cat_name, font=ctk.CTkFont("Segoe UI", 16, "bold"), text_color=cat_color).pack(anchor="w")
-            ctk.CTkLabel(copy, text=module_title, font=ctk.CTkFont("Segoe UI", 9, "bold"), text_color=MUTED).pack(anchor="w")
+            copy.pack(side="left", fill="x", expand=True)
+            ctk.CTkLabel(
+                copy, text=cat_name, font=ctk.CTkFont("Segoe UI", 17, "bold"),
+                text_color=cat_color,
+            ).pack(anchor="w")
+            ctk.CTkLabel(
+                copy, text=module_title,
+                font=ctk.CTkFont("Segoe UI", FONT_CAPTION, "bold"), text_color=MUTED,
+            ).pack(anchor="w")
             if not self.secret_modules.is_registered(secret_id):
                 ctk.CTkLabel(
                     copy, text="модуль в разработке",
-                    font=ctk.CTkFont("Segoe UI", 9), text_color="#6E7C92",
+                    font=ctk.CTkFont("Segoe UI", FONT_NOTE), text_color="#8A97AB",
                 ).pack(anchor="w")
             row = ctk.CTkFrame(card, fg_color="transparent")
-            row.pack(fill="x", padx=22, pady=(0, 18))
+            row.pack(fill="x", padx=16, pady=(0, 15))
             for index, food_id in enumerate(ingredients):
                 if index:
-                    ctk.CTkLabel(row, text="→", width=24, font=ctk.CTkFont("Segoe UI", 15, "bold"), text_color=GOLD).pack(side="left")
+                    ctk.CTkLabel(
+                        row, text="→", width=20,
+                        font=ctk.CTkFont("Segoe UI", FONT_LEAD, "bold"), text_color=GOLD,
+                    ).pack(side="left")
                 icon = self.food_photo(food_id, 38, 38)
                 ctk.CTkLabel(
                     row, text="" if icon else FOOD_NAMES[food_id], image=icon, height=38,
                     width=48 if icon else 0, corner_radius=11, fg_color="#252D3C",
-                    text_color=TEXT, font=ctk.CTkFont("Segoe UI", 11, "bold"),
-                ).pack(side="left", padx=3)
+                    text_color=TEXT, font=ctk.CTkFont("Segoe UI", FONT_NOTE, "bold"),
+                ).pack(side="left", padx=2)
 
     def show_pantry(self) -> None:
         """Кормилка: правильная последовательность открывает пасхалку."""
@@ -620,6 +787,7 @@ class KisikiApp(ctk.CTk):
         grid = ctk.CTkFrame(home, fg_color="transparent")
         grid.pack(fill="x", padx=36, pady=(0, 12))
         cat_columns_count = 5
+        cat_column_width = (self.MIN_WIDTH - 2 * self.CAT_GRID_PADDING) / cat_columns_count
         for column in range(cat_columns_count):
             grid.grid_columnconfigure(column, weight=1, uniform="club_cat")
 
@@ -627,10 +795,14 @@ class KisikiApp(ctk.CTk):
             "Сонные котики": ("☾", "#222E46", "#9EB4FF"),
             "Строитель": ("▦", "#3A3223", GOLD),
             "Электрик": ("⚡", "#20363A", "#72D7D2"),
-            "Шахтёр": ("◆", "#3B3422", "#E2B85B"),
+            "Добывающие котики": ("◆", "#33361F", "#C9D06B"),
             "Рыбак": ("♆", "#17383B", "#63C7BC"),
             "Лудоманы": ("♠", "#392A42", "#D4A7FF"),
         }
+        # Категория из двух котиков попадает на перенос строки: Кварц
+        # заканчивает первый ряд, Сучок начинает второй. Счёт стоит только на
+        # первой полосе — повторённое «· 2» читалось бы как ошибка.
+        counted_categories: set[str] = set()
         for row_start in range(0, len(CATS), cat_columns_count):
             row_cats = CATS[row_start:row_start + cat_columns_count]
             segment_start = 0
@@ -640,13 +812,21 @@ class KisikiApp(ctk.CTk):
                 while segment_end < len(row_cats) and row_cats[segment_end][4] == category:
                     segment_end += 1
                 icon, background, accent = category_styles[category]
-                category_count = sum(1 for cat in CATS if cat[4] == category)
+                if category in counted_categories:
+                    category_count = None
+                else:
+                    category_count = sum(1 for cat in CATS if cat[4] == category)
+                    counted_categories.add(category)
+                caption, caption_size = self.category_caption(
+                    icon, category, category_count,
+                    segment_end - segment_start, cat_column_width,
+                )
                 # A single widget avoids the rectangular seam that a transparent
                 # child label can leave over a rounded CTkFrame border.
                 category_bar = ctk.CTkLabel(
-                    grid, text=f"{icon}  {category.upper()}  ·  {category_count}",
+                    grid, text=caption,
                     height=34, fg_color=background, corner_radius=11,
-                    font=ctk.CTkFont("Segoe UI", 10, "bold"), text_color=accent,
+                    font=ctk.CTkFont("Segoe UI", caption_size, "bold"), text_color=accent,
                 )
                 category_bar.grid(
                     row=(row_start // cat_columns_count) * 2,
@@ -697,7 +877,11 @@ class KisikiApp(ctk.CTk):
 
         planned_grid = ctk.CTkFrame(home, fg_color="transparent")
         planned_grid.pack(fill="x", padx=36, pady=(0, 12))
-        for column in range(min(cat_columns_count, len(COMING_SOON_CATS))):
+        planned_columns_count = min(cat_columns_count, len(COMING_SOON_CATS))
+        planned_column_width = (
+            self.MIN_WIDTH - 2 * self.CAT_GRID_PADDING
+        ) / planned_columns_count
+        for column in range(planned_columns_count):
             planned_grid.grid_columnconfigure(column, weight=1, uniform="planned_cat")
 
         for row_start in range(0, len(COMING_SOON_CATS), cat_columns_count):
@@ -710,10 +894,14 @@ class KisikiApp(ctk.CTk):
                     segment_end += 1
                 icon, background, accent = category_styles[category]
                 category_count = sum(1 for cat in COMING_SOON_CATS if cat[3] == category)
+                caption, caption_size = self.category_caption(
+                    icon, category, category_count,
+                    segment_end - segment_start, planned_column_width,
+                )
                 ctk.CTkLabel(
-                    planned_grid, text=f"{icon}  {category.upper()}  ·  {category_count}",
+                    planned_grid, text=caption,
                     height=30, fg_color=background, corner_radius=10,
-                    font=ctk.CTkFont("Segoe UI", 9, "bold"), text_color=accent,
+                    font=ctk.CTkFont("Segoe UI", caption_size, "bold"), text_color=accent,
                 ).grid(
                     row=(row_start // cat_columns_count) * 2,
                     column=segment_start, columnspan=segment_end - segment_start,
@@ -1640,6 +1828,7 @@ class KisikiApp(ctk.CTk):
             "builder": "Остановлено: открыт модуль строителя.",
             "volt": "Остановлено: открыт модуль электрика.",
             "miner": "Остановлено: открыт модуль шахтёра.",
+            "lumberjack": "Остановлено: открыт модуль лесоруба.",
             "race_bettor": "Остановлено: открыт модуль ставок на скачки.",
             "slot_spinner": "Остановлено: открыт модуль слотов.",
             "blackjack": "Остановлено: открыт модуль блэкджека.",

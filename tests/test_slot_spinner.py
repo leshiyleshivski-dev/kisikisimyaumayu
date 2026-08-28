@@ -89,13 +89,13 @@ class SlotInputTests(unittest.TestCase):
 
 class SlotCatalogTests(unittest.TestCase):
     def test_seven_replaces_spin_placeholder(self) -> None:
-        self.assertEqual(CATS[6][0], "Семёрка")
-        self.assertTrue(CATS[6][2].endswith("08_slot_cat.png"))
+        self.assertEqual(CATS[7][0], "Семёрка")
+        self.assertTrue(CATS[7][2].endswith("08_slot_cat.png"))
         self.assertNotIn("Спин", {cat[0] for cat in COMING_SOON_CATS})
 
     def test_slot_recipe_is_registered_for_seven(self) -> None:
         recipes = {secret_id: ingredients for secret_id, _title, ingredients in SECRET_RECIPES}
-        self.assertEqual(SECRET_CAT_INDICES["slot_spinner"], 6)
+        self.assertEqual(SECRET_CAT_INDICES["slot_spinner"], 7)
         self.assertEqual(recipes["slot_spinner"], ("pizza", "donut", "ice_cream"))
 
 

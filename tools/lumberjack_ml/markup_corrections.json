@@ -1,0 +1,8 @@
+{
+  "test3_table_03.png": {
+    "ignore_points": [
+      [1026, 162]
+    ],
+    "note": "User confirmed that prediction 4:0.07 is not a branch."
+  }
+}
